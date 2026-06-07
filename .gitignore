@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+.Python
+venv/
+env/
+.venv/
+
+# 数据
+data/*.db
+data/*.sqlite
+data/cache/
+
+# 环境
+.env
+.env.local
+
+# 日志
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Railway / Render
+railway.json
+render.yaml

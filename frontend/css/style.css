@@ -1,0 +1,26 @@
+/* 柯基 1 页纸 自定义样式 */
+body { font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* 加载动画 */
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.6s linear infinite; }
+
+/* hover 效果 */
+.hover-lift { transition: transform 0.15s, box-shadow 0.15s; }
+.hover-lift:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+
+/* 步骤进度连线 */
+.step-line { width: 2px; height: 16px; background: #e2e8f0; margin-left: 11px; }
+.step-line.done { background: #10b981; }
+
+/* 打印样式 */
+@media print {
+  .no-print, header, aside, footer { display: none !important; }
+  main { grid-column: span 12 / span 12; }
+  body { background: white; }
+}

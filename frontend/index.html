@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>柯基 1 页纸 · BlueOcean 个股分析</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-slate-50" x-data="appData()" x-init="init()">
+
+<!-- 顶部 -->
+<header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+<div class="max-w-[1400px] mx-auto px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <div class="text-2xl">🐕</div>
+    <div>
+      <h1 class="text-lg font-bold text-slate-800">柯基 1 页纸</h1>
+      <p class="text-xs text-slate-500">BlueOcean Asset 卖方主观分析框架</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <input x-model="ticker" @keydown.enter="runAnalysis()" type="text" placeholder="输入 ticker (如 NVDA/COHR)"
+      class="px-3 py-1.5 border border-slate-300 rounded text-sm w-48 focus:outline-none focus:border-blue-500">
+    <button @click="runAnalysis()" :disabled="loading"
+      class="px-4 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+      <span x-show="!loading">分析 →</span>
+      <span x-show="loading">分析中...</span>
+    </button>
+    <button @click="showHistory = !showHistory" class="px-3 py-1.5 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50">
+      📚 历史
+    </button>
+  </div>
+</div>
+</header>
+
+<div class="max-w-[1400px] mx-auto px-6 py-6 grid grid-cols-12 gap-4">
+
+<!-- 左侧进度栏 -->
+<aside class="col-span-2">
+  <div class="bg-white border border-slate-200 rounded-lg p-3 sticky top-20">
+    <h3 class="text-xs font-semibold text-slate-500 uppercase mb-2">进度</h3>
+    <template x-for="step in steps" :key="step.id">
+      <div @click="activeStep = step.id"
+        :class="activeStep === step.id ? 'bg-blue-50 border-blue-300' : 'border-transparent hover:bg-slate-50'"
+        class="px-2 py-1.5 mb-1 rounded cursor-pointer border text-xs flex items-center justify-between">
+        <span>
+          <span class="text-slate-400 mr-1" x-text="step.id"></span>
+          <span x-text="step.label"></span>
+        </span>
+        <span x-text="step.status"></span>
+      </div>
+    </template>
+    <div class="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500">
+      <div>综合分: <span class="font-bold text-slate-800" x-text="report?.confidence ? Math.round(report.confidence/10*10)/10 + '/10' : '—'"></span></div>
+      <div class="mt-1">信号: <span class="font-bold" :class="signalColor" x-text="report?.signal || '—'"></span></div>
+    </div>
+  </div>
+</aside>
+
+<!-- 中间主分析区 -->
+<main class="col-span-7">
+
+  <!-- 空状态 -->
+  <div x-show="!report" class="bg-white border border-slate-200 rounded-lg p-12 text-center">
+    <div class="text-6xl mb-4">📊</div>
+    <h2 class="text-xl font-semibold text-slate-700 mb-2">输入 ticker 开始分析</h2>
+    <p class="text-sm text-slate-500 mb-6">支持美股 (NVDA/COHR/MU...) 和港股 (0700.HK)</p>
+    <div class="flex justify-center gap-2 flex-wrap">
+      <template x-for="t in ['NVDA','COHR','MU','GOOG','CRWV','IREN','AVGO']" :key="t">
+        <button @click="ticker = t; runAnalysis()" class="px-3 py-1.5 border border-slate-300 rounded text-sm hover:bg-slate-50" x-text="t"></button>
+      </template>
+    </div>
+  </div>
+
+  <!-- 报告区域 -->
+  <div x-show="report" class="space-y-3">
+    <!-- Step 1: 顶部摘要卡片 -->
+    <div class="bg-white border border-slate-200 rounded-lg p-4">
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="text-2xl font-bold" x-text="report?.name || report?.ticker"></div>
+          <div class="text-xs text-slate-500 mt-0.5">
+            <span x-text="report?.ticker"></span> ·
+            <span x-text="report?.sector || 'N/A'"></span>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-3xl font-bold text-slate-800">$<span x-text="report?.current_price?.toFixed(2) || '—'"></span></div>
+          <div class="text-xs text-slate-500">目标价 $<span x-text="report?.target_price?.toFixed(2) || '—'"></span></div>
+          <div :class="signalBg" class="inline-block mt-1 px-3 py-1 rounded text-xs font-bold text-white" x-text="(report?.signal || '').toUpperCase() + ' (' + report?.confidence + ')'"></div>
+        </div>
+      </div>
+      <div class="mt-3 p-3 bg-slate-50 border-l-4 border-blue-500 text-sm" x-text="report?.one_liner"></div>
+    </div>
+
+    <!-- Step 2: 4 维基本面 -->
+    <div x-show="activeStep >= 2" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">② 4 维基本面扫描 <span class="text-xs text-slate-400 ml-2">🤖 自动</span></h3>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs text-slate-500 border-b">
+            <th class="pb-1">维度</th><th class="pb-1">信号</th><th class="pb-1">详情</th><th class="pb-1 text-right">分数</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(f, k) in fundamentalRows" :key="k">
+            <tr class="border-b border-slate-100">
+              <td class="py-2 font-medium" x-text="f.name"></td>
+              <td><span :class="f.bg" class="px-2 py-0.5 rounded text-xs font-bold text-white" x-text="f.signal"></span></td>
+              <td class="text-xs text-slate-600" x-text="f.detail"></td>
+              <td class="text-right font-mono" x-text="f.score + '/10'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div class="mt-2 text-sm">基本面综合分: <b x-text="report?.fundamental?.fund_score + '/10'"></b></div>
+    </div>
+
+    <!-- Step 3: 产业链定位 -->
+    <div x-show="activeStep >= 3" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">③ 产业链定位 <span class="text-xs text-blue-500 ml-2">🤖✍️ 半自动 (可改)</span></h3>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><span class="text-slate-500">定位:</span> <b x-text="report?.chain?.bottleneck_label"></b></div>
+        <div><span class="text-slate-500">涨价权:</span> <b x-text="report?.chain?.pricing_power"></b></div>
+        <div><span class="text-slate-500">量价:</span> <b x-text="report?.chain?.volume_price_trend"></b></div>
+        <div><span class="text-slate-500">主线受益:</span> <b x-text="report?.chain?.mainline_benefit_score + '/10'"></b></div>
+        <div class="col-span-2"><span class="text-slate-500">主要客户:</span> <span x-text="report?.chain?.customers?.join(', ') || 'N/A'"></span></div>
+        <div class="col-span-2"><span class="text-slate-500">产业链位置:</span> <span x-text="report?.chain?.chain_location"></span></div>
+        <div class="col-span-2 text-xs italic text-slate-500" x-text="report?.chain?.llm_suggestion"></div>
+      </div>
+    </div>
+
+    <!-- Step 4: 催化时点 -->
+    <div x-show="activeStep >= 4" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">④ 催化时点 <span class="text-xs text-blue-500 ml-2">🤖✍️ 半自动</span></h3>
+      <table class="w-full text-sm" x-show="report?.catalysts?.catalysts?.length">
+        <thead>
+          <tr class="text-left text-xs text-slate-500 border-b">
+            <th class="pb-1">事件</th><th class="pb-1">日期</th><th class="pb-1">预期</th><th class="pb-1">影响</th><th class="pb-1">概率</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="c in report?.catalysts?.catalysts || []" :key="c.event">
+            <tr class="border-b border-slate-100">
+              <td class="py-2" x-text="c.event"></td>
+              <td x-text="c.date || 'N/A'"></td>
+              <td class="text-xs" x-text="c.expected"></td>
+              <td><span :class="impactBg(c.impact)" class="px-2 py-0.5 rounded text-xs font-bold text-white" x-text="c.impact"></span></td>
+              <td x-text="c.probability + '%'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div x-show="!report?.catalysts?.catalysts?.length" class="text-sm text-slate-400 text-center py-4">无催化数据 (LLM 未启用或返回空)</div>
+    </div>
+
+    <!-- Step 5: 日历 + 事件 -->
+    <div x-show="activeStep >= 5" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">⑤ 日历 + 事件 <span class="text-xs text-slate-400 ml-2">🤖 自动</span></h3>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><span class="text-slate-500">当前季度:</span> <b x-text="report?.calendar?.current_quarter"></b></div>
+        <div><span class="text-slate-500">距中期选举:</span> <b x-text="report?.calendar?.days_to_midterm_election + ' 天'"></b></div>
+        <div><span class="text-slate-500">距鲍威尔卸任:</span> <b x-text="report?.calendar?.days_to_powell_departure + ' 天'"></b></div>
+        <div><span class="text-slate-500">日历效应:</span> <b x-text="report?.calendar?.calendar_effect"></b></div>
+        <div class="col-span-2 text-xs text-slate-600" x-text="report?.calendar?.position_in_cycle"></div>
+      </div>
+    </div>
+
+    <!-- Step 6: 轮动定位 -->
+    <div x-show="activeStep >= 6" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">⑥ 轮动定位 <span class="text-xs text-orange-500 ml-2">✍️ 手动</span></h3>
+      <div class="space-y-2 text-sm">
+        <div><span class="text-slate-500">轮动位置:</span>
+          <select x-model="form.rotation_position" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs">
+            <option value="leading">领涨 leading</option>
+            <option value="mid">中段 mid</option>
+            <option value="late">末段 late</option>
+            <option value="catchup">补涨 catchup</option>
+          </select>
+        </div>
+        <div><span class="text-slate-500">轮动链:</span> <input x-model="form.rotation_chain" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-96" placeholder="如: 算力主线 → 高低切补涨"></div>
+        <div><span class="text-slate-500">资金流:</span> <input x-model="form.capital_flow" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-96" placeholder="如: BTC → ETH → SOL"></div>
+        <div><span class="text-slate-500">相对表现:</span> <input x-model="form.relative_performance" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-96" placeholder="如: 1m +18%, 跑赢纳指"></div>
+      </div>
+    </div>
+
+    <!-- Step 7: 见顶/见底信号 -->
+    <div x-show="activeStep >= 7" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">
+        ⑦ 见顶/见底信号 (<span x-text="report?.top_bottom?.triggered_count"></span>/<span x-text="report?.top_bottom?.total_count"></span> 触发)
+        <span class="text-xs text-slate-400 ml-2">🤖 自动 + ✍️ 手动</span>
+      </h3>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs text-slate-500 border-b">
+            <th class="pb-1">指标</th><th class="pb-1">状态</th><th class="pb-1">值</th><th class="pb-1">说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="s in report?.top_bottom?.signals || []" :key="s.name">
+            <tr class="border-b border-slate-100">
+              <td class="py-2" x-text="s.name"></td>
+              <td><span :class="s.triggered ? 'bg-red-500' : 'bg-slate-300'" class="px-2 py-0.5 rounded text-xs font-bold text-white" x-text="s.triggered ? '✓ 触发' : '— 未触发'"></span></td>
+              <td class="font-mono text-xs" x-text="s.value || 'N/A'"></td>
+              <td class="text-xs text-slate-600" x-text="s.note"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <div class="mt-2 text-sm">情绪: <b x-text="report?.top_bottom?.sentiment"></b></div>
+    </div>
+
+    <!-- Step 8: 风险定价 -->
+    <div x-show="activeStep >= 8" class="bg-white border border-slate-200 rounded-lg p-4">
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">⑧ 风险定价 <span class="text-xs text-orange-500 ml-2">✍️ 手动</span></h3>
+      <div id="risks-container" class="space-y-2 text-sm">
+        <template x-for="(r, idx) in form.risks" :key="idx">
+          <div class="border border-slate-200 rounded p-2 flex gap-2 items-center">
+            <select x-model="r.severity" class="px-2 py-1 border border-slate-300 rounded text-xs">
+              <option value="high">高 high</option>
+              <option value="medium">中 medium</option>
+              <option value="low">低 low</option>
+            </select>
+            <input x-model="r.description" class="flex-1 px-2 py-1 border border-slate-300 rounded text-xs" placeholder="风险描述 (如: 商誉 77亿/资产51%)">
+            <input x-model="r.trigger_signal" class="flex-1 px-2 py-1 border border-slate-300 rounded text-xs" placeholder="触发信号 (如: 跌破 200d MA)">
+            <button @click="form.risks.splice(idx, 1)" class="text-red-500 text-xs">✗</button>
+          </div>
+        </template>
+      </div>
+      <button @click="form.risks.push({severity:'medium',description:'',trigger_signal:''})" class="mt-2 text-xs text-blue-500">+ 添加风险</button>
+      <div class="mt-3 text-sm">
+        <span class="text-slate-500">止损价:</span>
+        <input x-model.number="form.stop_loss_price" type="number" step="0.01" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-24">
+        <span class="text-slate-500 ml-3">止损 %:</span>
+        <input x-model.number="form.stop_loss_pct" type="number" step="0.1" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-20">
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<!-- 右侧: 综合分 + 1 页纸预览 -->
+<aside class="col-span-3">
+  <div class="bg-white border border-slate-200 rounded-lg p-4 sticky top-20">
+    <h3 class="text-xs font-semibold text-slate-500 uppercase mb-2">1 页纸输出</h3>
+
+    <div x-show="report" class="space-y-2">
+      <div class="text-center">
+        <div class="text-3xl font-bold" :class="signalColor" x-text="(report?.confidence/10).toFixed(1) + '/10'"></div>
+        <div class="text-xs text-slate-500">综合分</div>
+      </div>
+      <div class="text-center">
+        <span :class="signalBg" class="inline-block px-3 py-1 rounded text-xs font-bold text-white" x-text="(report?.signal || '').toUpperCase()"></span>
+      </div>
+
+      <button @click="exportOnePager('html')" :disabled="exporting"
+        class="w-full px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+        <span x-show="!exporting">📄 导出 HTML</span>
+        <span x-show="exporting">导出中...</span>
+      </button>
+      <button @click="exportOnePager('pdf')" :disabled="exporting"
+        class="w-full px-3 py-2 bg-slate-700 text-white rounded text-sm hover:bg-slate-800 disabled:opacity-50">
+        <span x-show="!exporting">📑 导出 PDF</span>
+        <span x-show="exporting">导出中...</span>
+      </button>
+      <button @click="saveToHistory()"
+        class="w-full px-3 py-2 bg-slate-200 text-slate-700 rounded text-sm hover:bg-slate-300">
+        💾 保存到历史
+      </button>
+
+      <div class="pt-3 border-t border-slate-100 text-xs text-slate-500">
+        <div>数据缺口:</div>
+        <ul class="mt-1 list-disc list-inside">
+          <li>一手订单数据</li>
+          <li>客户拆分</li>
+          <li>内部人交易</li>
+        </ul>
+      </div>
+    </div>
+
+    <div x-show="!report" class="text-sm text-slate-400 text-center py-6">
+      分析完成后显示
+    </div>
+  </div>
+</aside>
+
+</div>
+
+<!-- 历史面板 -->
+<div x-show="showHistory" x-transition class="fixed inset-0 bg-black/40 z-50" @click="showHistory = false">
+  <div class="absolute right-0 top-0 h-full w-[480px] bg-white shadow-2xl p-6 overflow-y-auto" @click.stop>
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-bold">历史分析</h2>
+      <button @click="showHistory = false" class="text-slate-400 text-xl">×</button>
+    </div>
+    <div class="space-y-2">
+      <template x-for="h in history" :key="h.id">
+        <div @click="loadHistory(h.id)" class="border border-slate-200 rounded p-3 hover:bg-slate-50 cursor-pointer">
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="font-bold" x-text="h.ticker"></div>
+              <div class="text-xs text-slate-500" x-text="h.name"></div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs" x-text="new Date(h.created_at).toLocaleString('zh-CN')"></div>
+              <span :class="h.signal === 'bullish' ? 'bg-green-500' : h.signal === 'bearish' ? 'bg-red-500' : 'bg-slate-400'" class="inline-block mt-1 px-2 py-0.5 rounded text-xs font-bold text-white" x-text="h.signal"></span>
+            </div>
+          </div>
+          <div class="text-xs text-slate-600 mt-1" x-text="h.one_liner"></div>
+        </div>
+      </template>
+      <div x-show="!history.length" class="text-sm text-slate-400 text-center py-8">暂无历史分析</div>
+    </div>
+  </div>
+</div>
+
+<!-- 免责声明 -->
+<footer class="max-w-[1400px] mx-auto px-6 py-4 text-xs text-slate-400 text-center border-t border-slate-200 mt-8">
+  柯基 1 页纸 v1.0 · 基于 BlueOcean Asset 卖方主观分析框架 · 仅供个人研究使用<br>
+  ⚠️ 免责声明: 本工具由 AI 基于公开数据 + 主观判断生成,不构成投资建议,投资有风险,决策需谨慎。
+</footer>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
