@@ -25,7 +25,8 @@ from database import init_db, save_analysis, list_analyses, get_analysis, get_la
 from pdf_export import generate_html, generate_pdf
 from schemas import (
     StockSnapshot, FundamentalScan, ChainPositioning, CatalystsBlock,
-    CalendarBlock, RotationBlock, RiskBlock, OnePagerReport
+    CalendarBlock, RotationBlock, RiskBlock, OnePagerReport,
+    PortfolioCreate, PortfolioUpdate, PositionCreate, PositionUpdate,
 )
 
 
@@ -357,9 +358,131 @@ async def health():
     return {
         "status": "ok",
         "version": "1.0.0",
-        "llm_enabled": bool(os.environ.get("OPENAI_API_KEY")),
+        "llm_enabled": bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("GOOGLE_API_KEY")),
         "fred_enabled": bool(os.environ.get("FRED_API_KEY")),
     }
+
+
+# =============================================================
+# Portfolio API (组合管理)
+# =============================================================
+from database import (
+    create_portfolio, list_portfolios, get_portfolio, update_portfolio,
+    delete_portfolio, add_position, update_position, delete_position,
+    seed_current_holdings,
+)
+
+
+@app.get("/api/portfolio/list")
+async def api_list_portfolios():
+    """列出所有组合 (含仓位统计)"""
+    return list_portfolios()
+
+
+@app.post("/api/portfolio/seed")
+async def api_seed_portfolio(name: str = "AI 产业链核心组合 (2026 H1)", base_capital: float = 100000.0):
+    """预置当前 20 只持仓 (一次性, 重复调用会创建多个组合)"""
+    pid = seed_current_holdings(name=name, base_capital=base_capital)
+    return {"id": pid, "name": name, "message": "已预置 20 只持仓"}
+
+
+@app.post("/api/portfolio")
+async def api_create_portfolio(req: PortfolioCreate):
+    """新建组合 (可同时带 positions)"""
+    pid = create_portfolio(
+        name=req.name,
+        base_capital=req.base_capital,
+        base_currency=req.base_currency,
+        notes=req.notes or "",
+    )
+    for pos in req.positions:
+        add_position(
+            portfolio_id=pid,
+            ticker=pos.ticker,
+            weight_pct=pos.weight_pct,
+            cost_basis=pos.cost_basis,
+            shares=pos.shares,
+            entry_date=pos.entry_date,
+            notes=pos.notes or "",
+        )
+    return {"id": pid, "message": f"组合 {req.name} 已创建"}
+
+
+@app.get("/api/portfolio/{portfolio_id}")
+async def api_get_portfolio(portfolio_id: int):
+    """获取组合详情"""
+    result = get_portfolio(portfolio_id)
+    if not result:
+        raise HTTPException(404, f"组合 {portfolio_id} 不存在")
+    return result
+
+
+@app.put("/api/portfolio/{portfolio_id}")
+async def api_update_portfolio(portfolio_id: int, req: PortfolioUpdate):
+    """更新组合元数据"""
+    ok = update_portfolio(
+        portfolio_id=portfolio_id,
+        name=req.name,
+        base_capital=req.base_capital,
+        base_currency=req.base_currency,
+        notes=req.notes,
+    )
+    if not ok:
+        raise HTTPException(404, f"组合 {portfolio_id} 不存在或无更新")
+    return {"message": "已更新"}
+
+
+@app.delete("/api/portfolio/{portfolio_id}")
+async def api_delete_portfolio(portfolio_id: int):
+    """删除组合 (级联删除 positions)"""
+    ok = delete_portfolio(portfolio_id)
+    if not ok:
+        raise HTTPException(404, f"组合 {portfolio_id} 不存在")
+    return {"message": f"组合 {portfolio_id} 已删除"}
+
+
+@app.post("/api/portfolio/{portfolio_id}/position")
+async def api_add_position(portfolio_id: int, req: PositionCreate):
+    """添加/更新持仓 (已存在则更新)"""
+    p = get_portfolio(portfolio_id)
+    if not p:
+        raise HTTPException(404, f"组合 {portfolio_id} 不存在")
+    pos_id = add_position(
+        portfolio_id=portfolio_id,
+        ticker=req.ticker,
+        weight_pct=req.weight_pct,
+        cost_basis=req.cost_basis,
+        shares=req.shares,
+        entry_date=req.entry_date,
+        notes=req.notes or "",
+    )
+    return {"id": pos_id, "ticker": req.ticker.upper(), "message": "持仓已添加/更新"}
+
+
+@app.put("/api/portfolio/{portfolio_id}/position/{ticker}")
+async def api_update_position(portfolio_id: int, ticker: str, req: PositionUpdate):
+    """更新单只持仓"""
+    ok = update_position(
+        portfolio_id=portfolio_id,
+        ticker=ticker,
+        weight_pct=req.weight_pct,
+        cost_basis=req.cost_basis,
+        shares=req.shares,
+        entry_date=req.entry_date,
+        notes=req.notes,
+    )
+    if not ok:
+        raise HTTPException(404, f"持仓 {ticker} 不存在或无更新")
+    return {"message": f"持仓 {ticker.upper()} 已更新"}
+
+
+@app.delete("/api/portfolio/{portfolio_id}/position/{ticker}")
+async def api_delete_position(portfolio_id: int, ticker: str):
+    """删除持仓"""
+    ok = delete_position(portfolio_id, ticker)
+    if not ok:
+        raise HTTPException(404, f"持仓 {ticker} 不存在")
+    return {"message": f"持仓 {ticker.upper()} 已删除"}
 
 
 # ────────────────────────────────────────

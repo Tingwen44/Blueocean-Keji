@@ -202,3 +202,58 @@ class AnalysisRequest(BaseModel):
     ticker: str
     use_llm: bool = True
     save_to_db: bool = True
+
+
+# ────────────────────────────────────────
+# 组合管理 (Portfolio)
+# ────────────────────────────────────────
+class Position(BaseModel):
+    ticker: str
+    weight_pct: float = Field(..., ge=0, le=100, description="目标权重百分比")
+    cost_basis: Optional[float] = Field(None, description="建仓成本价(可选, 用于算浮盈)")
+    shares: Optional[float] = Field(None, description="持仓股数(可选, 用于算市值)")
+    entry_date: Optional[str] = Field(None, description="建仓日期 YYYY-MM-DD")
+    notes: Optional[str] = ""
+
+
+class PositionCreate(BaseModel):
+    ticker: str
+    weight_pct: float
+    cost_basis: Optional[float] = None
+    shares: Optional[float] = None
+    entry_date: Optional[str] = None
+    notes: Optional[str] = ""
+
+
+class PositionUpdate(BaseModel):
+    weight_pct: Optional[float] = None
+    cost_basis: Optional[float] = None
+    shares: Optional[float] = None
+    entry_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class Portfolio(BaseModel):
+    id: Optional[int] = None
+    name: str
+    base_capital: float = 100000.0
+    base_currency: str = "USD"
+    notes: Optional[str] = ""
+    positions: List[Position] = []
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class PortfolioCreate(BaseModel):
+    name: str
+    base_capital: float = 100000.0
+    base_currency: str = "USD"
+    notes: Optional[str] = ""
+    positions: List[PositionCreate] = []
+
+
+class PortfolioUpdate(BaseModel):
+    name: Optional[str] = None
+    base_capital: Optional[float] = None
+    base_currency: Optional[str] = None
+    notes: Optional[str] = None
