@@ -22,9 +22,24 @@ from schemas import StockSnapshot, ChainPositioning, CatalystsBlock, Catalyst
 
 
 def _setup_proxy():
+    """在本地开发时, 如果没设代理且能连上 127.0.0.1:7890, 自动配上 (仅本地便利)
+    Railway/云端: 由用户自己设 HTTP_PROXY env var, 这里不强制
+    """
+    # 检测是否在云端 (Railway 注入 PORT 或 RAILWAY_ENVIRONMENT)
+    if os.environ.get('PORT') or os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'):
+        return  # 云端: 不动, 用户自己配
+    # 本地: 只在用户没设过且 7890 端口可达时, 自动加
     if not os.environ.get('HTTP_PROXY'):
-        os.environ['HTTP_PROXY'] = 'http://127.0.0.1:7890'
-        os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:7890'
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.3)
+            s.connect(('127.0.0.1', 7890))
+            s.close()
+            os.environ['HTTP_PROXY'] = 'http://127.0.0.1:7890'
+            os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:7890'
+        except Exception:
+            pass  # 连不上就别管, 走直连
 
 
 def _get_provider(provider: Optional[str] = None) -> str:
