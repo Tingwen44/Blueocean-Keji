@@ -23,12 +23,18 @@ from schemas import StockSnapshot, ChainPositioning, CatalystsBlock, Catalyst
 
 def _setup_proxy():
     """在本地开发时, 如果没设代理且能连上 127.0.0.1:7890, 自动配上 (仅本地便利)
-    Railway/云端: 由用户自己设 HTTP_PROXY env var, 这里不强制
+    Railway/云端: 主动清掉指向 127.0.0.1 的本地 proxy (避免误配)
     """
-    # 检测是否在云端 (Railway 注入 PORT 或 RAILWAY_ENVIRONMENT)
-    if os.environ.get('PORT') or os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'):
-        return  # 云端: 不动, 用户自己配
-    # 本地: 只在用户没设过且 7890 端口可达时, 自动加
+    is_cloud = bool(os.environ.get('PORT') or os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'))
+
+    if is_cloud:
+        for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
+            v = os.environ.get(k, '')
+            if v and ('127.0.0.1' in v or 'localhost' in v):
+                print(f'[llm_helper] 云端检测到本地 proxy {k}={v}, 主动清掉')
+                os.environ.pop(k, None)
+        return
+
     if not os.environ.get('HTTP_PROXY'):
         try:
             import socket

@@ -15,9 +15,17 @@ from schemas import StockSnapshot
 
 def _setup_proxy():
     """国内环境必须设代理 (仅本地便利)"""
-    # 检测是否在云端 (Railway 注入 PORT 或 RAILWAY_ENVIRONMENT)
-    if os.environ.get('PORT') or os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'):
-        return  # 云端: 不动, 用户自己配
+    is_cloud = bool(os.environ.get('PORT') or os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'))
+
+    if is_cloud:
+        # 云端: 主动清掉指向 127.0.0.1/localhost 的 proxy (本地误配)
+        for k in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy']:
+            v = os.environ.get(k, '')
+            if v and ('127.0.0.1' in v or 'localhost' in v):
+                print(f'[data_fetcher] 云端检测到本地 proxy {k}={v}, 主动清掉')
+                os.environ.pop(k, None)
+        return
+
     if not os.environ.get('HTTP_PROXY') and not os.environ.get('HTTPS_PROXY'):
         # 本地: 只在 7890 端口可达时才用
         try:
