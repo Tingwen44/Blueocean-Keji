@@ -41,10 +41,23 @@ def _setup_proxy():
 
 
 def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
-    """拉取单只股票的全量快照"""
+    """拉取单只股票的全量快照
+
+    失败时不抛异常, 返回 data_quality="low" 的最小 snapshot (其他字段 None)
+    """
     _setup_proxy()
-    t = yf.Ticker(ticker)
-    info = t.info or {}
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+    except Exception as e:
+        print(f"[data_fetcher] yfinance 拉取 {ticker} 失败: {type(e).__name__}: {e}")
+        return StockSnapshot(
+            ticker=ticker.upper(),
+            name=ticker.upper(),
+            sector="数据拉取失败",
+            industry="N/A",
+            data_quality="low",
+        )
 
     def _f(key, default=None):
         v = info.get(key)
