@@ -14,10 +14,22 @@ from schemas import StockSnapshot
 
 
 def _setup_proxy():
-    """国内环境必须设代理"""
+    """国内环境必须设代理 (仅本地便利)"""
+    # 检测是否在云端 (Railway 注入 PORT 或 RAILWAY_ENVIRONMENT)
+    if os.environ.get('PORT') or os.environ.get('RAILWAY_ENVIRONMENT') or os.environ.get('RENDER'):
+        return  # 云端: 不动, 用户自己配
     if not os.environ.get('HTTP_PROXY') and not os.environ.get('HTTPS_PROXY'):
-        os.environ['HTTP_PROXY'] = 'http://127.0.0.1:7890'
-        os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:7890'
+        # 本地: 只在 7890 端口可达时才用
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.3)
+            s.connect(('127.0.0.1', 7890))
+            s.close()
+            os.environ['HTTP_PROXY'] = 'http://127.0.0.1:7890'
+            os.environ['HTTPS_PROXY'] = 'http://127.0.0.1:7890'
+        except Exception:
+            pass  # 连不上就走直连
 
 
 def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
