@@ -32,3 +32,11 @@ Thumbs.db
 # Railway / Render
 railway.json
 render.yaml
+
+# 调试脚本
+backend/_test_*.py
+backend/_diag_*.py
+backend/_read_xlsx.py
+
+# 历史记录
+GEMINI_PENDING.md
