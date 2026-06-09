@@ -1,0 +1,13 @@
+# =============================================================
+# Nixpacks 配置 (Railway 用)
+# - 显式指定 Python provider, 避免自动检测失败
+# - start command 跟 railway.toml 一致
+# =============================================================
+[providers]
+python = "3.12"
+
+[phases.setup]
+nixPkgs = ["python312"]
+
+[start]
+cmd = "cd backend && python app.py"
