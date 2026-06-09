@@ -21,12 +21,22 @@
     </div>
   </div>
   <div class="flex items-center gap-2">
+    <!-- LLM 状态点 -->
+    <div class="flex items-center gap-1.5 px-2 py-1 border border-slate-200 rounded text-xs"
+         :title="'当前 LLM: ' + llmStatusLabel"
+         @click="openSettings()" style="cursor:pointer">
+      <span class="w-2 h-2 rounded-full" :class="llmEnabled ? 'bg-green-500' : 'bg-slate-300'"></span>
+      <span class="text-slate-600" x-text="llmStatusLabel"></span>
+    </div>
     <input x-model="ticker" @keydown.enter="runAnalysis()" type="text" placeholder="输入 ticker (如 NVDA/COHR)"
       class="px-3 py-1.5 border border-slate-300 rounded text-sm w-48 focus:outline-none focus:border-blue-500">
     <button @click="runAnalysis()" :disabled="loading"
       class="px-4 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
       <span x-show="!loading">分析 →</span>
       <span x-show="loading">分析中...</span>
+    </button>
+    <button @click="openSettings()" class="px-3 py-1.5 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50" title="LLM 设置">
+      ⚙️ 设置
     </button>
     <button @click="showHistory = !showHistory" class="px-3 py-1.5 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50">
       📚 历史
@@ -297,7 +307,7 @@
     </div>
     <div class="space-y-2">
       <template x-for="h in history" :key="h.id">
-        <div @click="loadHistory(h.id)" class="border border-slate-200 rounded p-3 hover:bg-slate-50 cursor-pointer">
+        <div @click="loadHistoryItem(h.id)" class="border border-slate-200 rounded p-3 hover:bg-slate-50 cursor-pointer">
           <div class="flex justify-between items-start">
             <div>
               <div class="font-bold" x-text="h.ticker"></div>
@@ -312,6 +322,93 @@
         </div>
       </template>
       <div x-show="!history.length" class="text-sm text-slate-400 text-center py-8">暂无历史分析</div>
+    </div>
+  </div>
+</div>
+
+<!-- 设置面板 (LLM 配置) -->
+<div x-show="showSettings" x-transition class="fixed inset-0 bg-black/40 z-50" @click="showSettings = false">
+  <div class="absolute right-0 top-0 h-full w-[480px] bg-white shadow-2xl p-6 overflow-y-auto" @click.stop>
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-lg font-bold">⚙️ LLM 设置</h2>
+      <button @click="showSettings = false" class="text-slate-400 text-xl">×</button>
+    </div>
+
+    <div class="space-y-5">
+      <!-- Provider 选择 -->
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">大模型 Provider</label>
+        <select x-model="llm.provider" class="w-full px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:border-blue-500">
+          <template x-for="opt in providerOptions" :key="opt.value">
+            <option :value="opt.value" x-text="opt.label"></option>
+          </template>
+        </select>
+        <p class="text-xs text-slate-500 mt-1">
+          关闭时只走规则化降级 (跟 Gemini 集成出问题时的行为一致); 选了之后请填 API key
+        </p>
+      </div>
+
+      <!-- API Key -->
+      <div x-show="llm.provider !== 'off'">
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">API Key</label>
+        <div class="flex gap-2">
+          <input :type="showApiKey ? 'text' : 'password'"
+                 x-model="llm.apiKey"
+                 class="flex-1 px-3 py-2 border border-slate-300 rounded text-sm font-mono focus:outline-none focus:border-blue-500"
+                 placeholder="sk-... 或 AIza...">
+          <button @click="showApiKey = !showApiKey"
+                  class="px-3 py-2 border border-slate-300 rounded text-sm text-slate-600 hover:bg-slate-50"
+                  x-text="showApiKey ? '🙈' : '👁'"></button>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">
+          🔒 key 只存浏览器 localStorage, 不发到服务器存储, 调用时 header 传给后端
+        </p>
+      </div>
+
+      <!-- Model (可选) -->
+      <div x-show="llm.provider !== 'off'">
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">模型 (留空用默认)</label>
+        <input x-model="llm.model"
+               class="w-full px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:border-blue-500"
+               :placeholder="modelPlaceholder">
+      </div>
+
+      <!-- 测试连接 -->
+      <div x-show="llm.provider !== 'off' && llm.apiKey" class="bg-slate-50 border border-slate-200 rounded p-3">
+        <button @click="testLLM()" :disabled="llmTesting"
+                class="w-full px-3 py-2 bg-slate-700 text-white rounded text-sm hover:bg-slate-800 disabled:opacity-50">
+          <span x-show="!llmTesting">🔌 测试连接</span>
+          <span x-show="llmTesting">测试中...</span>
+        </button>
+        <div x-show="llmTestResult" class="mt-2 text-xs"
+             :class="llmTestResult?.ok ? 'text-green-600' : 'text-red-600'">
+          <div class="font-bold" x-text="llmTestResult?.ok ? '✓ ' + llmTestResult?.message : '✗ ' + (llmTestResult?.message || '失败')"></div>
+          <div x-show="llmTestResult && !llmTestResult.ok" class="text-slate-500 mt-1">
+            (key 错也无所谓, 后端会自动降级到规则化分析, 不阻塞运行)
+          </div>
+        </div>
+      </div>
+
+      <!-- 保存/清空 -->
+      <div class="flex gap-2 pt-3 border-t border-slate-200">
+        <button @click="saveSettings()"
+                class="flex-1 px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">
+          💾 保存
+        </button>
+        <button @click="clearApiKey()"
+                x-show="llm.apiKey"
+                class="px-4 py-2 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50">
+          🗑 清除 key
+        </button>
+      </div>
+
+      <!-- 说明 -->
+      <div class="text-xs text-slate-500 bg-blue-50 border border-blue-100 rounded p-3 leading-relaxed">
+        <div class="font-semibold text-blue-700 mb-1">📖 优先级说明</div>
+        • 前端设置 (本抽屉) <span class="text-blue-600 font-bold">></span> 后端 .env 文件 <span class="text-blue-600 font-bold">></span> 默认关闭<br>
+        • key 存在浏览器 localStorage, 换设备/浏览器需重新配<br>
+        • DeepSeek / 硅基流动 / 其他 OpenAI 兼容服务: 选 OpenAI, 留空模型填对应名字
+      </div>
     </div>
   </div>
 </div>

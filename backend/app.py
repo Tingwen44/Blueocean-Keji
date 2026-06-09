@@ -9,7 +9,9 @@ import json
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi import FastAPI, HTTPException, Query
+import httpx
+
+from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -196,22 +198,40 @@ class OnePagerRequest(BaseModel):
     stop_loss_price: Optional[float] = None
     stop_loss_pct: Optional[float] = None
     data_gaps: List[str] = []
+    # LLM 配置 (body 方式, header 优先)
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 @app.post("/api/one-pager/{ticker}")
-async def generate_one_pager(ticker: str, req: OnePagerRequest):
-    """生成 1 页纸 (8 步全过)"""
+async def generate_one_pager(
+    ticker: str,
+    req: OnePagerRequest,
+    x_llm_provider: Optional[str] = Header(None, alias="X-LLM-Provider"),
+    x_llm_key: Optional[str] = Header(None, alias="X-LLM-Key"),
+    x_llm_model: Optional[str] = Header(None, alias="X-LLM-Model"),
+):
+    """生成 1 页纸 (8 步全过)
+
+    LLM 配置优先级: header > body > env
+    """
+    # 合并 LLM 配置
+    llm_provider = x_llm_provider or req.llm_provider
+    llm_api_key = x_llm_key or req.llm_api_key
+    llm_model = x_llm_model or req.llm_model
+
     try:
         # Step 1
         snap = fetch_stock_snapshot(ticker)
         # Step 2
         fund = scan_fundamental(snap)
-        # Step 3
-        chain = suggest_chain_positioning(snap) if req.use_llm else _fallback_chain(snap)
+        # Step 3 (支持 header 传 key)
+        chain = suggest_chain_positioning(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else _fallback_chain(snap)
         if chain is None:
             chain = _fallback_chain(snap)
         # Step 4
-        cats = suggest_catalysts(snap) if req.use_llm else None
+        cats = suggest_catalysts(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else None
         if cats is None:
             cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
         # Step 5
@@ -371,6 +391,58 @@ from database import (
     delete_portfolio, add_position, update_position, delete_position,
     seed_current_holdings,
 )
+
+
+# =============================================================
+# LLM 测试端点 (前端 "测试连接" 按钮调用)
+# =============================================================
+class LLMSettings(BaseModel):
+    provider: str = "off"  # off | openai | gemini
+    api_key: str = ""
+    model: str = ""
+
+
+@app.post("/api/llm/test")
+async def api_test_llm(settings: LLMSettings):
+    """测试 LLM 连接是否可用 (不调用 LLM, 只验证 key 格式 + provider 配置)"""
+    provider = (settings.provider or "off").lower().strip()
+    if provider == "off" or not settings.api_key:
+        return {
+            "ok": False,
+            "provider": provider,
+            "message": "LLM 已关闭或未提供 API key"
+        }
+
+    if provider == "gemini":
+        model = settings.model or "gemini-2.5-flash"
+        # 用一个最小的 list models 调用验证 key
+        try:
+            with httpx.Client(timeout=15.0) as c:
+                r = c.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={settings.api_key}",
+                )
+            if r.status_code == 200:
+                return {"ok": True, "provider": "gemini", "model": model, "message": "Gemini 连接成功"}
+            return {"ok": False, "provider": "gemini", "message": f"HTTP {r.status_code}: {r.text[:200]}"}
+        except Exception as e:
+            return {"ok": False, "provider": "gemini", "message": str(e)}
+
+    elif provider == "openai":
+        model = settings.model or "gpt-4o-mini"
+        try:
+            with httpx.Client(timeout=15.0) as c:
+                r = c.get(
+                    "https://api.openai.com/v1/models",
+                    headers={"Authorization": f"Bearer {settings.api_key}"},
+                )
+            if r.status_code == 200:
+                return {"ok": True, "provider": "openai", "model": model, "message": "OpenAI 连接成功"}
+            return {"ok": False, "provider": "openai", "message": f"HTTP {r.status_code}: {r.text[:200]}"}
+        except Exception as e:
+            return {"ok": False, "provider": "openai", "message": str(e)}
+
+    else:
+        return {"ok": False, "provider": provider, "message": f"未知 provider: {provider}"}
 
 
 @app.get("/api/portfolio/list")

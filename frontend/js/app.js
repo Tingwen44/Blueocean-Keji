@@ -1,3 +1,43 @@
+// =============================================================
+// localStorage keys
+// =============================================================
+const LS_LLM = {
+  provider: 'keji_llm_provider',
+  apiKey: 'keji_llm_api_key',
+  model: 'keji_llm_model',
+};
+
+function loadLLMSettings() {
+  return {
+    provider: localStorage.getItem(LS_LLM.provider) || 'off',
+    apiKey: localStorage.getItem(LS_LLM.apiKey) || '',
+    model: localStorage.getItem(LS_LLM.model) || '',
+  };
+}
+
+function saveLLMSettings(s) {
+  localStorage.setItem(LS_LLM.provider, s.provider);
+  if (s.apiKey) localStorage.setItem(LS_LLM.apiKey, s.apiKey);
+  else localStorage.removeItem(LS_LLM.apiKey);
+  if (s.model) localStorage.setItem(LS_LLM.model, s.model);
+  else localStorage.removeItem(LS_LLM.model);
+}
+
+function llmHeaders(settings) {
+  // 如果用户配了 LLM, 把设置塞到 header
+  if (settings.provider && settings.provider !== 'off' && settings.apiKey) {
+    return {
+      'X-LLM-Provider': settings.provider,
+      'X-LLM-Key': settings.apiKey,
+      ...(settings.model ? { 'X-LLM-Model': settings.model } : {}),
+    };
+  }
+  return {};
+}
+
+// =============================================================
+// Alpine.js 组件
+// =============================================================
 function appData() {
   return {
     // 状态
@@ -5,9 +45,16 @@ function appData() {
     loading: false,
     exporting: false,
     showHistory: false,
+    showSettings: false,
     activeStep: 1,
     report: null,
     history: [],
+
+    // LLM 设置 (从 localStorage 加载)
+    llm: loadLLMSettings(),
+    llmTesting: false,
+    llmTestResult: null,
+    showApiKey: false,
 
     // 表单 (Step 6 + 8 用户填)
     form: {
@@ -47,14 +94,89 @@ function appData() {
       } catch (e) { console.error('loadHistory error:', e); }
     },
 
+    // LLM 相关方法
+    get llmEnabled() {
+      return this.llm.provider && this.llm.provider !== 'off' && this.llm.apiKey;
+    },
+
+    get llmStatusLabel() {
+      if (this.llm.provider === 'off' || !this.llm.apiKey) return '关闭';
+      const p = this.llm.provider === 'openai' ? 'OpenAI' : 'Gemini';
+      return p + (this.llm.model ? ` (${this.llm.model})` : '');
+    },
+
+    get providerOptions() {
+      return [
+        { value: 'off', label: '关闭 (仅规则分析)' },
+        { value: 'openai', label: 'OpenAI (gpt-4o-mini 默认, 兼容 DeepSeek/其他)' },
+        { value: 'gemini', label: 'Google Gemini (gemini-2.5-flash 默认)' },
+      ];
+    },
+
+    get modelPlaceholder() {
+      if (this.llm.provider === 'openai') return 'gpt-4o-mini (或 deepseek-chat, gpt-4o)';
+      if (this.llm.provider === 'gemini') return 'gemini-2.5-flash (或 gemini-2.5-pro)';
+      return '';
+    },
+
+    openSettings() {
+      this.showSettings = true;
+      this.llmTestResult = null;
+    },
+
+    saveSettings() {
+      saveLLMSettings(this.llm);
+      this.showSettings = false;
+    },
+
+    clearApiKey() {
+      this.llm.apiKey = '';
+      this.llm.model = '';
+      saveLLMSettings(this.llm);
+    },
+
+    async testLLM() {
+      if (!this.llm.apiKey || this.llm.provider === 'off') {
+        this.llmTestResult = { ok: false, message: '请先选 provider 并填 API key' };
+        return;
+      }
+      this.llmTesting = true;
+      this.llmTestResult = null;
+      try {
+        const r = await fetch('/api/llm/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: this.llm.provider,
+            api_key: this.llm.apiKey,
+            model: this.llm.model,
+          }),
+        });
+        this.llmTestResult = await r.json();
+      } catch (e) {
+        this.llmTestResult = { ok: false, message: '网络错误: ' + e.message };
+      } finally {
+        this.llmTesting = false;
+      }
+    },
+
+    // 统一 fetch 包装, 自动加 LLM header
+    async apiFetch(url, options = {}) {
+      options.headers = {
+        ...(options.body && !options.headers?.['Content-Type'] ? { 'Content-Type': 'application/json' } : (options.headers || {})),
+        ...llmHeaders(this.llm),
+        ...(options.headers || {}),
+      };
+      return fetch(url, options);
+    },
+
     async runAnalysis() {
       if (!this.ticker) return;
       this.loading = true;
       this.activeStep = 1;
       try {
-        const r = await fetch(`/api/one-pager/${this.ticker.toUpperCase()}`, {
+        const r = await this.apiFetch(`/api/one-pager/${this.ticker.toUpperCase()}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             use_llm: true,
             save_to_db: true,
@@ -85,9 +207,8 @@ function appData() {
       if (!this.ticker) return;
       this.exporting = true;
       try {
-        const r = await fetch(`/api/export/${format}/${this.ticker.toUpperCase()}`, {
+        const r = await this.apiFetch(`/api/export/${format}/${this.ticker.toUpperCase()}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             use_llm: true,
             save_to_db: false,
