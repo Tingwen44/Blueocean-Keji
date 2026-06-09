@@ -223,19 +223,36 @@ async def generate_one_pager(
 
     try:
         # Step 1
-        snap = fetch_stock_snapshot(ticker)
+        try:
+            snap = fetch_stock_snapshot(ticker)
+        except Exception as e:
+            raise HTTPException(500, f"Step 1 (yfinance 拉取) 失败: {type(e).__name__}: {e}")
         # Step 2
-        fund = scan_fundamental(snap)
+        try:
+            fund = scan_fundamental(snap)
+        except Exception as e:
+            raise HTTPException(500, f"Step 2 (基本面扫描) 失败: {type(e).__name__}: {e}")
         # Step 3 (支持 header 传 key)
-        chain = suggest_chain_positioning(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else _fallback_chain(snap)
-        if chain is None:
+        try:
+            chain = suggest_chain_positioning(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else _fallback_chain(snap)
+            if chain is None:
+                chain = _fallback_chain(snap)
+        except Exception as e:
+            print(f"[Step 3 LLM] 失败, 降级: {e}")
             chain = _fallback_chain(snap)
         # Step 4
-        cats = suggest_catalysts(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else None
-        if cats is None:
+        try:
+            cats = suggest_catalysts(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else None
+            if cats is None:
+                cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
+        except Exception as e:
+            print(f"[Step 4 LLM] 失败, 降级: {e}")
             cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
         # Step 5
-        cal = scan_calendar(snap)
+        try:
+            cal = scan_calendar(snap)
+        except Exception as e:
+            raise HTTPException(500, f"Step 5 (日历) 失败: {type(e).__name__}: {e}")
         # Step 6 (用户填)
         rot = RotationBlock(
             ticker=ticker,
