@@ -221,6 +221,20 @@ async def generate_one_pager(
     llm_api_key = x_llm_key or req.llm_api_key
     llm_model = x_llm_model or req.llm_model
 
+    # ── 诊断日志: 收到的 LLM 配置 ──
+    print(f"[one-pager] ticker={ticker} LLM config: provider={llm_provider or '(none)'}, "
+          f"key_set={bool(llm_api_key)}, model={llm_model or '(default)'}, use_llm={req.use_llm}")
+
+    # 跟踪 LLM 实际调用结果
+    llm_status = {
+        "configured": bool(llm_api_key and llm_provider),
+        "provider": llm_provider or None,
+        "model": llm_model or None,
+        "step3": "skipped",
+        "step4": "skipped",
+        "errors": [],
+    }
+
     try:
         # Step 1
         try:
@@ -234,19 +248,39 @@ async def generate_one_pager(
             raise HTTPException(500, f"Step 2 (基本面扫描) 失败: {type(e).__name__}: {e}")
         # Step 3 (支持 header 传 key)
         try:
-            chain = suggest_chain_positioning(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else _fallback_chain(snap)
-            if chain is None:
+            if req.use_llm and llm_api_key:
+                chain = suggest_chain_positioning(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model)
+                if chain is None:
+                    chain = _fallback_chain(snap)
+                    llm_status["step3"] = "failed"
+                    llm_status["errors"].append("step3: suggest_chain_positioning returned None")
+                else:
+                    llm_status["step3"] = "success"
+            else:
                 chain = _fallback_chain(snap)
+                llm_status["step3"] = "not_configured"
         except Exception as e:
-            print(f"[Step 3 LLM] 失败, 降级: {e}")
+            print(f"[Step 3 LLM] 失败, 降级: {type(e).__name__}: {e}")
+            llm_status["step3"] = "failed"
+            llm_status["errors"].append(f"step3: {type(e).__name__}: {str(e)[:200]}")
             chain = _fallback_chain(snap)
         # Step 4
         try:
-            cats = suggest_catalysts(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model) if req.use_llm else None
-            if cats is None:
+            if req.use_llm and llm_api_key:
+                cats = suggest_catalysts(snap, provider=llm_provider, api_key=llm_api_key, model=llm_model)
+                if cats is None:
+                    cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
+                    llm_status["step4"] = "failed"
+                    llm_status["errors"].append("step4: suggest_catalysts returned None")
+                else:
+                    llm_status["step4"] = "success"
+            else:
                 cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
+                llm_status["step4"] = "not_configured"
         except Exception as e:
-            print(f"[Step 4 LLM] 失败, 降级: {e}")
+            print(f"[Step 4 LLM] 失败, 降级: {type(e).__name__}: {e}")
+            llm_status["step4"] = "failed"
+            llm_status["errors"].append(f"step4: {type(e).__name__}: {str(e)[:200]}")
             cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
         # Step 5
         try:
@@ -321,6 +355,7 @@ async def generate_one_pager(
         return {
             "id": rid,
             "report": report.model_dump(mode="json"),
+            "llm_status": llm_status,
         }
     except Exception as e:
         raise HTTPException(500, f"生成失败: {str(e)}")
