@@ -300,5 +300,55 @@ function appData() {
       if (s >= 25) return 'text-orange-500';     // fear
       return 'text-red-600';                     // extreme fear
     },
+
+    // Phase B: 蓝海框架 helpers
+    get blueOceanSignalLabel() {
+      const s = this.report?.blue_ocean?.overall?.signal;
+      const map = {
+        strong_buy_ready: '✓ 5 维好 + 信息丰富, 可建仓',
+        investable: '可投, 关注催化',
+        wait_for_catalyst: '⏸ 等催化, 中性',
+        avoid: '✗ 不建议',
+      };
+      return map[s] || 'N/A';
+    },
+    get blueOceanSignalColor() {
+      const s = this.report?.blue_ocean?.overall?.signal;
+      if (s === 'strong_buy_ready') return 'text-green-700';
+      if (s === 'investable') return 'text-blue-600';
+      if (s === 'wait_for_catalyst') return 'text-yellow-600';
+      if (s === 'avoid') return 'text-red-600';
+      return 'text-slate-500';
+    },
+    mpevlScoreColor(score) {
+      if (score >= 7) return 'bg-green-500 text-white';
+      if (score >= 5) return 'bg-yellow-400 text-slate-800';
+      if (score >= 3) return 'bg-orange-400 text-white';
+      return 'bg-red-500 text-white';
+    },
+    mpevlBarColor(score) {
+      if (score >= 7) return 'bg-green-500';
+      if (score >= 5) return 'bg-yellow-400';
+      if (score >= 3) return 'bg-orange-400';
+      return 'bg-red-500';
+    },
+    infoGapBorderColor(level) {
+      const map = {
+        S: 'border-amber-300 bg-amber-50',
+        A: 'border-slate-300 bg-slate-50',
+        B: 'border-blue-300 bg-blue-50',
+        C: 'border-slate-200 bg-slate-50',
+      };
+      return map[level] || 'border-slate-200';
+    },
+    infoGapTextColor(level) {
+      const map = {
+        S: 'text-amber-700',
+        A: 'text-slate-700',
+        B: 'text-blue-700',
+        C: 'text-slate-500',
+      };
+      return map[level] || 'text-slate-500';
+    },
   };
 }

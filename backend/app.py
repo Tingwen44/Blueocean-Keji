@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment
 from scoring import (
     scan_fundamental, scan_calendar, scan_top_bottom_signals,
-    compute_composite_score, derive_signal
+    compute_composite_score, derive_signal, compute_blue_ocean_scores,
 )
 from llm_helper import suggest_chain_positioning, suggest_catalysts
 from database import init_db, save_analysis, list_analyses, get_analysis, get_latest_for_ticker
@@ -354,6 +354,13 @@ async def generate_one_pager(
         signal, _ = derive_signal(composite)
         confidence = int(min(100, max(0, composite * 10)))
 
+        # Phase B: 蓝海框架 (MPEVL + 5 大方法 + 信息差 4 级)
+        market_sent_score = tb.sentiment_score  # CNN 真实分数
+        blue_ocean = compute_blue_ocean_scores(
+            snap=snap, fund=fund, cal=cal, tb=tb,
+            market_sentiment_score=market_sent_score,
+        )
+
         # 1 句结论
         one_liner = f"{fund.earnings_signal.upper()} 盈利, {fund.growth_signal.upper()} 增长, {fund.valuation_signal.upper()} 估值; 情绪 {tb.sentiment}; 综合分 {composite}/10 → {signal}"
 
@@ -375,6 +382,7 @@ async def generate_one_pager(
             top_bottom=tb,
             risk=risk,
             data_gaps=req.data_gaps,
+            blue_ocean=blue_ocean,
         )
 
         # 存档

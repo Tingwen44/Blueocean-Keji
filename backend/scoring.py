@@ -10,7 +10,7 @@ scoring.py
 """
 import os
 from datetime import datetime, date
-from typing import List
+from typing import List, Optional, Dict, Any
 from schemas import (
     StockSnapshot, FundamentalScan, CalendarBlock,
     TopBottomBlock, TopBottomSignal, OnePagerReport
@@ -442,3 +442,282 @@ def derive_signal(composite: float, target: float = None, current: float = None)
     else:
         signal = "bearish"
     return signal, composite
+
+
+# =============================================================
+# Phase B: 蓝海框架 (MPEVL 5 维 + 5 大方法 + 信息差 4 级)
+# =============================================================
+
+def compute_blue_ocean_scores(
+    snap: StockSnapshot,
+    fund: FundamentalScan,
+    cal: CalendarBlock,
+    tb: TopBottomBlock,
+    market_sentiment_score: Optional[int] = None,
+) -> Dict[str, Any]:
+    """蓝海框架综合分析
+
+    来源: mainland-subjective-analysis skill v1.0
+    输出:
+      - mpevl: 5 维评分 (Macro/Policy/Earnings/Valuation/Liquidity)
+      - methods: 5 大方法适用度
+      - info_gap: 信息差 4 级 (S/A/B/C)
+      - overall: 综合判断
+    """
+    # ────────────────────────────────────────
+    # 1. MPEVL 5 维评分
+    # ────────────────────────────────────────
+    mpevl = {}
+
+    # M 宏观 (依赖 FRED, 这里用市场情绪近似)
+    if market_sentiment_score is not None:
+        # 反向: 越恐惧 = 宏观给机会 (低基数效应)
+        if market_sentiment_score < 25:
+            m_score = 8
+            m_detail = f"市场情绪极端恐惧 (F&G {market_sentiment_score}), 宏观给机会"
+        elif market_sentiment_score < 45:
+            m_score = 6
+            m_detail = f"市场情绪恐惧 (F&G {market_sentiment_score}), 宏观偏正面"
+        elif market_sentiment_score < 55:
+            m_score = 5
+            m_detail = f"市场情绪中性 (F&G {market_sentiment_score}), 宏观中性"
+        elif market_sentiment_score < 75:
+            m_score = 4
+            m_detail = f"市场情绪贪婪 (F&G {market_sentiment_score}), 宏观偏负面"
+        else:
+            m_score = 2
+            m_detail = f"市场情绪极端贪婪 (F&G {market_sentiment_score}), 宏观过热"
+        m_signals = [f"CNN Fear & Greed: {market_sentiment_score}"]
+    else:
+        m_score = 5
+        m_detail = "无情绪数据, 中性"
+        m_signals = []
+
+    mpevl["M"] = {
+        "code": "M", "name": "宏观", "score": m_score, "detail": m_detail,
+        "signals": m_signals,
+    }
+
+    # P 政策 (用日历位置推断)
+    days_to_election = cal.days_to_midterm_election or 999
+    days_to_powell = cal.days_to_powell_departure or 999
+    if days_to_election < 90:
+        p_score = 7
+        p_detail = f"距中期选举 {days_to_election} 天, 政策窗口临近, 主题机会"
+    elif days_to_powell < 180:
+        p_score = 6
+        p_detail = f"距鲍威尔卸任 {days_to_powell} 天, 联储换届预期发酵"
+    else:
+        p_score = 5
+        p_detail = "无重大政策窗口, 中性"
+    mpevl["P"] = {
+        "code": "P", "name": "政策", "score": p_score, "detail": p_detail,
+        "signals": [f"距中期选举: {days_to_election} 天", f"距鲍威尔卸任: {days_to_powell} 天"],
+    }
+
+    # E 盈利 (用基本面 4 维里的 earnings_score)
+    e_score = int(fund.earnings_score)
+    e_detail = fund.earnings_detail or "无盈利数据"
+    mpevl["E"] = {
+        "code": "E", "name": "盈利", "score": e_score, "detail": e_detail,
+        "signals": [fund.earnings_signal],
+    }
+
+    # V 估值 (用基本面 4 维里的 valuation_score)
+    v_score = int(fund.valuation_score)
+    v_detail = fund.valuation_detail or "无估值数据"
+    mpevl["V"] = {
+        "code": "V", "name": "估值", "score": v_score, "detail": v_detail,
+        "signals": [f"PE Fwd: {snap.pe_forward}" if snap.pe_forward else "无 PE"],
+    }
+
+    # L 流动性 (用 50d/200d MA + ADV)
+    l_score = 5
+    l_signals = []
+    if snap.fifty_day_ma and snap.current_price and snap.two_hundred_day_ma:
+        above_50 = (snap.current_price / snap.fifty_day_ma - 1) * 100
+        above_200 = (snap.current_price / snap.two_hundred_day_ma - 1) * 100
+        # 趋势向上 = 流动性好
+        if above_50 > 5 and above_200 > 0:
+            l_score = 7
+            l_detail = f"现价在 50d/200d MA 之上, 趋势健康 (+{above_50:.0f}% / +{above_200:.0f}%)"
+        elif above_50 < -5 or above_200 < 0:
+            l_score = 3
+            l_detail = f"现价在 50d/200d MA 之下, 趋势走弱 ({above_50:+.0f}% / {above_200:+.0f}%)"
+        else:
+            l_score = 5
+            l_detail = f"现价在 50d/200d MA 附近, 趋势中性 ({above_50:+.0f}% / {above_200:+.0f}%)"
+        l_signals = [f"vs 50d MA: {above_50:+.1f}%", f"vs 200d MA: {above_200:+.1f}%"]
+    else:
+        l_detail = "无均线数据"
+    if snap.adv_30d_shares_mil:
+        l_signals.append(f"30d 均量: {snap.adv_30d_shares_mil:.1f}M 股")
+    mpevl["L"] = {
+        "code": "L", "name": "流动性", "score": l_score, "detail": l_detail,
+        "signals": l_signals,
+    }
+
+    # ────────────────────────────────────────
+    # 2. 5 大方法适用度
+    # ────────────────────────────────────────
+    methods = []
+
+    # 1. 产业链瓶颈定位
+    chain_applicable = 8 if (snap.sector or snap.industry) else 0
+    methods.append({
+        "code": "chain_bottleneck",
+        "name": "产业链瓶颈定位",
+        "applicable": chain_applicable,
+        "rationale": f"行业: {snap.industry or 'N/A'} - 可用 yfinance/Finnhub 行业数据 + LLM 推断瓶颈位置",
+        "data_available": bool(snap.industry),
+    })
+
+    # 2. 日历+事件叠加
+    cal_applicable = 8 if (cal.days_to_earnings or cal.days_to_midterm_election) else 3
+    methods.append({
+        "code": "calendar_event",
+        "name": "日历+事件叠加",
+        "applicable": cal_applicable,
+        "rationale": f"距财报: {cal.days_to_earnings or 'N/A'} 天 - 财报季叠加中期选举+鲍威尔卸任",
+        "data_available": bool(cal.days_to_earnings),
+    })
+
+    # 3. 轮动规律识别
+    methods.append({
+        "code": "rotation",
+        "name": "轮动规律识别",
+        "applicable": 5,  # 需用户主观判断
+        "rationale": "需用户填轮动链 + 资金流方向, AI 仅给量化辅助 (Phase C)",
+        "data_available": False,
+    })
+
+    # 4. 专家访谈加权
+    methods.append({
+        "code": "expert_interview",
+        "name": "专家访谈加权",
+        "applicable": 0,
+        "rationale": "❌ 柯基无法独立获取 (S 级信息), 需用户提供",
+        "data_available": False,
+    })
+
+    # 5. 见顶/见底信号
+    tb_applicable = 9 if tb.signals else 0
+    tb_triggered = sum(1 for s in tb.signals if s.triggered)
+    methods.append({
+        "code": "top_bottom",
+        "name": "见顶/见底信号清单",
+        "applicable": tb_applicable,
+        "rationale": f"{tb_triggered}/{len(tb.signals)} 触发, 已分类见顶/见底两组 (Phase A)",
+        "data_available": True,
+    })
+
+    # ────────────────────────────────────────
+    # 3. 信息差 4 级评估
+    # ────────────────────────────────────────
+    info_gap = []
+
+    # S 级 (一手) - 柯基拿不到
+    info_gap.append({
+        "level": "S",
+        "name": "一手信息 (独家)",
+        "score": 0,
+        "sources": [
+            "供应商电话会议 (❌ 需用户参加)",
+            "离职高管访谈 (❌ 需用户关系)",
+            "大基金私下路演 (❌ 需机构通道)",
+            "政策窗口先知 (❌ 提前量是关键)",
+        ],
+        "available": False,
+    })
+
+    # A 级 (二手) - 部分可拉
+    a_sources = []
+    a_score = 0
+    if snap.held_percent_institutions is not None:
+        a_sources.append(f"13F 机构持仓: {snap.held_percent_institutions:.1f}%")
+        a_score += 3
+    if snap.recommendation_mean is not None:
+        a_sources.append(f"分析师共识目标: {snap.recommendation_mean:.2f}")
+        a_score += 2
+    if snap.target_mean_price:
+        a_sources.append(f"分析师目标价: ${snap.target_mean_price}")
+        a_score += 2
+    if not a_sources:
+        a_sources = ["13F 持仓变动", "分析师预期差", "大单流向 (Fintel/Quiver Quantitative)"]
+        a_score = 2
+    info_gap.append({
+        "level": "A",
+        "name": "二手信息 (机构/分析师)",
+        "score": min(a_score, 10),
+        "sources": a_sources,
+        "available": True,
+    })
+
+    # B 级 (公开) - LLM 推断
+    b_sources = [
+        "财经媒体报道 (LLM 扫描可补)",
+        "雪球/Reddit/X 讨论热度",
+        "Google Trends 搜索指数 (需 pytrends)",
+        "公司投资者电话会议 transcript (需 SEC EDGAR)",
+    ]
+    info_gap.append({
+        "level": "B",
+        "name": "公开信息 (媒体/社区)",
+        "score": 5,  # LLM 可扫描但有滞后
+        "sources": b_sources,
+        "available": True,
+    })
+
+    # C 级 (低质) - yfinance 永远有
+    c_sources = []
+    c_score = 8
+    if snap.name: c_sources.append(f"公司名: {snap.name}")
+    if snap.current_price: c_sources.append(f"现价: ${snap.current_price}")
+    if snap.pe_forward: c_sources.append(f"PE Fwd: {snap.pe_forward}")
+    if snap.gross_margin: c_sources.append(f"毛利率: {snap.gross_margin:.1f}%")
+    if snap.revenue_growth_yoy: c_sources.append(f"营收 YoY: {snap.revenue_growth_yoy:.1f}%")
+    if snap.short_percent_of_float: c_sources.append(f"做空比例: {snap.short_percent_of_float:.1f}%")
+    if snap.held_percent_insiders is not None: c_sources.append(f"内部人持股: {snap.held_percent_insiders:.1f}%")
+    c_sources.append("(其他 ~40 个 yfinance/Finnhub 字段)")
+    info_gap.append({
+        "level": "C",
+        "name": "低质公开数据 (财报/价格)",
+        "score": c_score,
+        "sources": c_sources,
+        "available": True,
+    })
+
+    # ────────────────────────────────────────
+    # 4. 综合判断
+    # ────────────────────────────────────────
+    mpevl_avg = sum(d["score"] for d in mpevl.values()) / 5
+    methods_avg = sum(m["applicable"] for m in methods) / 5
+
+    # 信息差综合 (越靠 S/A 级越多越好)
+    gap_weights = {"S": 4, "A": 3, "B": 2, "C": 1}
+    weighted_gap = sum(g["score"] * gap_weights[g["level"]] for g in info_gap)
+    max_gap = sum(10 * w for w in gap_weights.values())
+    gap_pct = round(weighted_gap / max_gap * 100, 1)
+
+    # 综合建议
+    if mpevl_avg >= 7 and gap_pct >= 50:
+        overall = "strong_buy_ready"  # 5 维好 + 信息丰富
+    elif mpevl_avg >= 6:
+        overall = "investable"  # 5 维还行
+    elif mpevl_avg >= 4:
+        overall = "wait_for_catalyst"  # 中性
+    else:
+        overall = "avoid"  # 不建议
+
+    return {
+        "mpevl": mpevl,
+        "methods": methods,
+        "info_gap": info_gap,
+        "overall": {
+            "signal": overall,
+            "mpevl_avg": round(mpevl_avg, 2),
+            "methods_avg": round(methods_avg, 2),
+            "gap_pct": gap_pct,
+            "summary": f"MPEVL {mpevl_avg:.1f}/10 · 5方法 {methods_avg:.1f}/10 · 信息差 {gap_pct:.0f}%"
+        },
+    }

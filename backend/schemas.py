@@ -200,6 +200,38 @@ class OnePagerReport(BaseModel):
     risk: RiskBlock
     created_at: Optional[datetime] = None
     data_gaps: List[str] = []
+    # Phase B: 蓝海框架 (MPEVL 5 维 + 5 大方法 + 信息差 4 级)
+    blue_ocean: Optional[dict] = None  # 用 dict 是因为嵌套复杂, 见 compute_blue_ocean_scores
+
+
+# ────────────────────────────────────────
+# Phase B: 蓝海框架模型
+# ────────────────────────────────────────
+class MPEVLDimension(BaseModel):
+    """MPEVL 单维评分"""
+    code: Literal["M", "P", "E", "V", "L"]
+    name: str  # 宏观/政策/盈利/估值/流动性
+    score: int = Field(..., ge=0, le=10)
+    detail: str
+    signals: List[str] = []  # 具体观察点
+
+
+class BlueOceanMethod(BaseModel):
+    """5 大方法适用度"""
+    code: Literal["chain_bottleneck", "calendar_event", "rotation", "expert_interview", "top_bottom"]
+    name: str
+    applicable: int = Field(..., ge=0, le=10)
+    rationale: str
+    data_available: bool
+
+
+class InformationGapLevel(BaseModel):
+    """信息差 4 级"""
+    level: Literal["S", "A", "B", "C"]
+    name: str
+    score: int = Field(..., ge=0, le=10)  # 该等级信息丰富度
+    sources: List[str]  # 具体来源描述
+    available: bool  # 柯基是否可独立获取
 
 
 # ────────────────────────────────────────
