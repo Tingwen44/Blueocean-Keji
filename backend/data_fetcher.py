@@ -249,8 +249,14 @@ def _try_finnhub(ticker: str) -> Optional[StockSnapshot]:
         with httpx.Client(timeout=timeout) as c:
             # 1) Quote
             r_quote = c.get(f"{base}/quote", params={**params, "symbol": ticker})
+            if r_quote.status_code == 401:
+                print(f"[data_fetcher] Finnhub /quote {ticker} 401 Unauthorized — API key 失效, 需重配")
+                return None
+            if r_quote.status_code == 403:
+                print(f"[data_fetcher] Finnhub /quote {ticker} 403 Forbidden — free tier 不支持此 ticker (常见: 韩股 .KS / 港股 .HK)")
+                return None
             if r_quote.status_code != 200:
-                print(f"[data_fetcher] Finnhub /quote {ticker} {r_quote.status_code}")
+                print(f"[data_fetcher] Finnhub /quote {ticker} {r_quote.status_code}: {r_quote.text[:200]}")
                 return None
             quote = r_quote.json()
             if not quote or quote.get("c") is None or quote.get("c") == 0:
