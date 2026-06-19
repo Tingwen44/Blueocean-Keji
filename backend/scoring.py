@@ -197,7 +197,13 @@ def scan_calendar(snap: StockSnapshot) -> CalendarBlock:
 # Step 7: 见顶/见底信号
 # ────────────────────────────────────────
 def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
-    """可量化的见顶/见底信号检测 (不依赖 LLM)"""
+    """可量化的见顶/见底信号检测 (不依赖 LLM)
+
+    每个信号标注 signal_type:
+      - "top"     = 见顶警告 (触发时是减仓信号)
+      - "bottom"  = 见底信号 (触发时是加仓信号)
+      - "neutral" = 中性 (双向)
+    """
     signals: List[TopBottomSignal] = []
 
     # 1. 标普 PE 分位 (用个股 PE Fwd 近似)
@@ -205,34 +211,62 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
     if pe > 40:
         signals.append(TopBottomSignal(
             name="PE Fwd 高位",
+            signal_type="top",  # ← 触发 = 见顶警告
             triggered=True,
             value=f"{pe:.1f}x",
             note="PE > 40, 估值在历史高位"
         ))
+    elif 0 < pe < 10:
+        signals.append(TopBottomSignal(
+            name="PE Fwd 低位",
+            signal_type="bottom",  # ← 触发 = 见底信号
+            triggered=True,
+            value=f"{pe:.1f}x",
+            note="PE < 10, 估值在历史低位"
+        ))
     else:
         signals.append(TopBottomSignal(
-            name="PE Fwd 高位",
+            name="PE Fwd 中位",
+            signal_type="neutral",
             triggered=False,
             value=f"{pe:.1f}x" if pe else "N/A",
-            note="估值未明显高估"
+            note="估值未明显高估或低估"
         ))
 
     # 2. 距 52w 高点回撤
     if snap.fifty_two_week_high and snap.current_price:
         dd = (snap.current_price / snap.fifty_two_week_high - 1) * 100
-        if dd < -10:
+        if dd < -30:
+            signals.append(TopBottomSignal(
+                name="距高点大幅回撤",
+                signal_type="bottom",  # ← 触发 = 见底信号 (深度回撤)
+                triggered=True,
+                value=f"{dd:.1f}%",
+                note="从高点回撤 30%+, 严重超卖, 关注反弹机会"
+            ))
+        elif dd < -10:
             signals.append(TopBottomSignal(
                 name="距高点回撤",
-                triggered=False,
+                signal_type="bottom",  # ← 触发 = 见底信号
+                triggered=True,
                 value=f"{dd:.1f}%",
                 note="从高点回撤 10%+, 可能见底机会"
             ))
-        else:
+        elif dd > -5:
             signals.append(TopBottomSignal(
-                name="距高点回撤",
+                name="接近 52w 高点",
+                signal_type="top",  # ← 触发 = 见顶警告
                 triggered=True,
                 value=f"{dd:.1f}%",
-                note="接近 52w 高点, 谨防动能衰竭"
+                note="距离 52w 高点不到 5%, 谨防动能衰竭"
+            ))
+        else:
+            signals.append(TopBottomSignal(
+                name="中位震荡",
+                signal_type="neutral",
+                triggered=False,
+                value=f"{dd:.1f}%",
+                note="距高点 5-10%, 区间震荡"
             ))
 
     # 3. 现价 vs 200d MA
@@ -241,6 +275,7 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
         if pct > 50:
             signals.append(TopBottomSignal(
                 name="现价 vs 200d MA",
+                signal_type="top",  # ← 触发 = 见顶警告
                 triggered=True,
                 value=f"+{pct:.1f}%",
                 note="超涨 50%+, 严重超买"
@@ -248,14 +283,24 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
         elif pct > 0:
             signals.append(TopBottomSignal(
                 name="现价 vs 200d MA",
+                signal_type="top",  # ← 触发 = 见顶警告
                 triggered=True,
                 value=f"+{pct:.1f}%",
                 note="趋势向上, 谨防追高"
             ))
+        elif pct < -30:
+            signals.append(TopBottomSignal(
+                name="现价 vs 200d MA",
+                signal_type="bottom",  # ← 触发 = 见底信号
+                triggered=True,
+                value=f"{pct:.1f}%",
+                note="低于 200d MA 30%+, 严重超卖"
+            ))
         else:
             signals.append(TopBottomSignal(
                 name="现价 vs 200d MA",
-                triggered=False,
+                signal_type="bottom",  # ← 触发 = 见底信号
+                triggered=True,
                 value=f"{pct:.1f}%",
                 note="低于长期均线, 可能见底"
             ))
@@ -265,13 +310,15 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
         if snap.beta > 2:
             signals.append(TopBottomSignal(
                 name="高 Beta",
+                signal_type="top",  # ← 触发 = 见顶警告 (高波动=高风险)
                 triggered=True,
                 value=f"{snap.beta:.2f}",
                 note="波动率为大盘 2 倍以上, 仓位要小"
             ))
         elif snap.beta > 1.5:
             signals.append(TopBottomSignal(
-                name="高 Beta",
+                name="中高 Beta",
+                signal_type="neutral",
                 triggered=False,
                 value=f"{snap.beta:.2f}",
                 note="波动较大, 注意仓位管理"
@@ -281,10 +328,19 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
     if snap.held_percent_insiders is not None:
         if snap.held_percent_insiders < 1:
             signals.append(TopBottomSignal(
-                name="内部人持股",
+                name="内部人持股低",
+                signal_type="top",  # ← 触发 = 见顶警告 (管理层对自己信心不足)
                 triggered=True,
                 value=f"{snap.held_percent_insiders:.1f}%",
                 note="内部人持股 < 1%, 信号不积极"
+            ))
+        elif snap.held_percent_insiders > 20:
+            signals.append(TopBottomSignal(
+                name="内部人持股高",
+                signal_type="bottom",  # ← 触发 = 见底信号 (管理层高信心)
+                triggered=True,
+                value=f"{snap.held_percent_insiders:.1f}%",
+                note="内部人持股 > 20%, 管理层高信心"
             ))
 
     # 6. 做空占比
@@ -292,9 +348,18 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
         if snap.short_percent_of_float > 20:
             signals.append(TopBottomSignal(
                 name="高做空",
+                signal_type="bottom",  # ← 触发 = 见底信号 (过度悲观 = 反弹机会)
                 triggered=True,
                 value=f"{snap.short_percent_of_float:.1f}%",
-                note="做空 > 20%, 市场极度看空"
+                note="做空 > 20%, 市场极度看空, 可能见底"
+            ))
+        elif snap.short_percent_of_float < 2:
+            signals.append(TopBottomSignal(
+                name="低做空",
+                signal_type="top",  # ← 触发 = 见顶警告 (市场过度乐观)
+                triggered=True,
+                value=f"{snap.short_percent_of_float:.1f}%",
+                note="做空 < 2%, 市场极度乐观, 谨防见顶"
             ))
 
     # 7. 现金流
@@ -302,15 +367,26 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
         if snap.free_cashflow_usd_bil < -0.5:
             signals.append(TopBottomSignal(
                 name="FCF 转负",
+                signal_type="top",  # ← 触发 = 见顶警告 (财务恶化)
                 triggered=True,
                 value=f"${snap.free_cashflow_usd_bil:.1f}B",
                 note="自由现金流转负, 关注融资风险"
             ))
+        elif snap.free_cashflow_usd_bil > snap.market_cap and snap.market_cap:
+            signals.append(TopBottomSignal(
+                name="FCF 强劲",
+                signal_type="bottom",  # ← 触发 = 见底信号 (财务健康)
+                triggered=True,
+                value=f"${snap.free_cashflow_usd_bil:.1f}B",
+                note="自由现金流超过市值, 极度低估"
+            ))
 
     triggered_count = sum(1 for s in signals if s.triggered)
     total_count = len(signals)
+    top_count = sum(1 for s in signals if s.signal_type == "top" and s.triggered)
+    bottom_count = sum(1 for s in signals if s.signal_type == "bottom" and s.triggered)
 
-    # 情绪判断
+    # 情绪判断 (会由 app.py 用真实 CNN 数据覆盖)
     if triggered_count >= total_count * 0.7:
         sentiment = "extreme_greed"
     elif triggered_count >= total_count * 0.5:

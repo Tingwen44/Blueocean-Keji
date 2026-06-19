@@ -7,7 +7,7 @@ FastAPI 主入口
 import os
 import json
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import httpx
 
@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators
+from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment
 from scoring import (
     scan_fundamental, scan_calendar, scan_top_bottom_signals,
     compute_composite_score, derive_signal
@@ -89,6 +89,17 @@ async def get_snapshot(ticker: str):
 async def get_macro():
     """拉取宏观指标 (Step 5 辅助)"""
     return fetch_macro_indicators()
+
+
+@app.get("/api/market/sentiment")
+async def api_market_sentiment(force: bool = False):
+    """拉取 CNN Fear & Greed Index (市场情绪, 0-100)
+
+    - 免费 API, 无 key
+    - 10 分钟内存缓存
+    - Phase A: 给顶栏"情绪"用实时数值
+    """
+    return fetch_market_sentiment(force=force)
 
 
 # ────────────────────────────────────────
@@ -298,6 +309,25 @@ async def generate_one_pager(
         )
         # Step 7
         tb = scan_top_bottom_signals(snap)
+        # 覆盖 sentiment: 拉 CNN 真实贪婪指数 (失败则用规则化推断)
+        try:
+            market_sent = fetch_market_sentiment()
+            if market_sent.get("score") is not None:
+                tb.sentiment_score = market_sent["score"]
+                tb.sentiment_label = market_sent.get("label")
+                tb.sentiment_source = market_sent.get("source", "cnn_api")
+                tb.sentiment_prev_close = market_sent.get("previous_close")
+                tb.sentiment_prev_week = market_sent.get("previous_1_week")
+                # 用真实分数映射到 5 档 sentiment
+                s = market_sent["score"]
+                if s >= 75: tb.sentiment = "extreme_greed"
+                elif s >= 55: tb.sentiment = "greed"
+                elif s >= 45: tb.sentiment = "neutral"
+                elif s >= 25: tb.sentiment = "fear"
+                else: tb.sentiment = "extreme_fear"
+        except Exception as e:
+            print(f"[app] 拉取市场情绪失败, 用规则推断: {e}")
+            tb.sentiment_source = "rule"
         # Step 8 (用户填)
         from schemas import RiskItem
         risks_list = []
