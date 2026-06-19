@@ -85,11 +85,29 @@ def resolve_ticker(ticker: str) -> str:
     return TICKER_ALIASES.get(t, t)
 
 
+def _try_yfinance_with_timeout(ticker: str, timeout: float = 8.0) -> Optional[StockSnapshot]:
+    """yfinance 带超时 (避免 datacenter IP 被 Yahoo 限流时无限挂起)
+
+    ThreadPoolExecutor 跑同步调用, 主线程 timeout 强制返回 None
+    """
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_try_yfinance, ticker)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            print(f"[data_fetcher] yfinance {ticker} 超时 ({timeout}s), 跳过")
+            return None
+        except Exception as e:
+            print(f"[data_fetcher] yfinance {ticker} 异常: {type(e).__name__}: {e}")
+            return None
+
+
 def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
     """拉取单只股票的全量快照
 
     Fallback 链:
-      1. yfinance (本地优先, 速度快数据全)
+      1. yfinance (本地优先, 速度快数据全) - 8s 超时
       2. Finnhub (云端 fallback, yfinance 被 Yahoo 限流时)
       3. 最小 snapshot (两源都挂时, data_quality="low")
 
@@ -98,12 +116,12 @@ def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
     _setup_proxy()
     ticker = resolve_ticker(ticker)
 
-    # 1) yfinance 优先
-    snap = _try_yfinance(ticker)
+    # 1) yfinance 优先 (带超时)
+    snap = _try_yfinance_with_timeout(ticker, timeout=8.0)
     if snap is not None:
         return snap
 
-    # 2) Finnhub fallback
+    # 2) Finnhub fallback (已有 15s 超时)
     snap = _try_finnhub(ticker)
     if snap is not None:
         return snap
@@ -113,7 +131,7 @@ def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
     return StockSnapshot(
         ticker=ticker,
         name=ticker,
-        sector="数据拉取失败 (提示: 试试用完整 ticker, 如 000660.KS / 0700.HK)",
+        sector="数据拉取失败 (yfinance 超时 + Finnhub 401, 需配置真实 FINNHUB_API_KEY)",
         industry="N/A",
         data_quality="low",
     )
