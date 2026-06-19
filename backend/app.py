@@ -17,10 +17,10 @@ from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment
+from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment, fetch_history_prices
 from scoring import (
     scan_fundamental, scan_calendar, scan_top_bottom_signals,
-    compute_composite_score, derive_signal, compute_blue_ocean_scores,
+    compute_composite_score, derive_signal, compute_blue_ocean_scores, compute_rotation_metrics,
 )
 from llm_helper import suggest_chain_positioning, suggest_catalysts
 from database import init_db, save_analysis, list_analyses, get_analysis, get_latest_for_ticker
@@ -298,14 +298,51 @@ async def generate_one_pager(
             cal = scan_calendar(snap)
         except Exception as e:
             raise HTTPException(500, f"Step 5 (日历) 失败: {type(e).__name__}: {e}")
-        # Step 6 (用户填)
+        # Step 6 (用户填, Phase C 加自动量化)
+        # 拉历史价 (SPY + 板块 ETF + ticker) 用于轮动指标
+        try:
+            spy_hist = fetch_history_prices('SPY', days=200)
+        except Exception:
+            spy_hist = None
+        sector_etf = None
+        ticker_hist = None
+        from scoring import SECTOR_ETF as _SECTOR_ETF
+        if snap.sector and snap.sector in _SECTOR_ETF:
+            sector_etf = _SECTOR_ETF[snap.sector]
+            try:
+                sector_hist = fetch_history_prices(sector_etf, days=200)
+            except Exception:
+                sector_hist = None
+        else:
+            sector_hist = None
+        try:
+            ticker_hist = fetch_history_prices(ticker.upper(), days=200)
+        except Exception:
+            ticker_hist = None
+
+        auto_metrics = compute_rotation_metrics(
+            snap=snap,
+            sector_etf_history=sector_hist,
+            ticker_history=ticker_hist,
+            spy_history=spy_hist,
+        )
+
+        # 默认用 auto_position (用户可改)
+        effective_position = req.rotation_position
+        if req.rotation_position == 'mid':  # 默认 = 用户没填, 用 auto
+            effective_position = auto_metrics['auto_position']
+
         rot = RotationBlock(
             ticker=ticker,
             sector=snap.sector or "N/A",
-            rotation_position=req.rotation_position,
+            rotation_position=effective_position,
             rotation_chain=req.rotation_chain or "未填写",
             capital_flow=req.capital_flow or "未填写",
             relative_performance=req.relative_performance or "未填写",
+            auto_metrics={
+                **auto_metrics,
+                "sector_etf_used": sector_etf,  # 实际用的板块 ETF (debug)
+            },
         )
         # Step 7
         tb = scan_top_bottom_signals(snap)

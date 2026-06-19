@@ -178,17 +178,56 @@
       </div>
     </div>
 
-    <!-- Step 6: 轮动定位 -->
+    <!-- Step 6: 轮动定位 (Phase C: 自动量化 + 手动覆盖) -->
     <div x-show="activeStep >= 6" class="bg-white border border-slate-200 rounded-lg p-4">
-      <h3 class="text-sm font-semibold text-slate-700 mb-3">⑥ 轮动定位 <span class="text-xs text-orange-500 ml-2">✍️ 手动</span></h3>
+      <h3 class="text-sm font-semibold text-slate-700 mb-3">
+        ⑥ 轮动定位
+        <span class="text-xs text-slate-400 ml-2">🤖 自动 (Phase C) + ✍️ 可改</span>
+      </h3>
+
+      <!-- 自动量化结果 (Phase C) -->
+      <div class="mb-3 p-3 bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded" x-show="report?.rotation?.auto_metrics">
+        <div class="flex justify-between items-center mb-2">
+          <div>
+            <div class="text-xs text-slate-500">自动判断</div>
+            <div class="text-lg font-bold" :class="rotationAutoColor" x-text="(report?.rotation?.auto_metrics?.auto_position_label || 'N/A') + ' (' + (report?.rotation?.auto_metrics?.total_score || 0) + '/100)'"></div>
+          </div>
+          <div class="text-xs text-slate-500 text-right">
+            <div>板块 ETF: <b x-text="report?.rotation?.auto_metrics?.sector_etf || 'N/A'"></b></div>
+            <div>板块: <b x-text="report?.rotation?.sector || 'N/A'"></b></div>
+          </div>
+        </div>
+        <!-- 4 个子指标进度条 -->
+        <div class="space-y-1.5 mt-2">
+          <template x-for="(sub, key) in (report?.rotation?.auto_metrics?.sub_scores || {})" :key="key">
+            <div>
+              <div class="flex items-center justify-between text-xs">
+                <span class="font-medium text-slate-700">
+                  <span x-text="rotationSubName(key)"></span>
+                  <span x-show="!sub.available" class="text-slate-400 text-xs ml-1">(数据缺失)</span>
+                </span>
+                <span class="font-mono" :class="sub.score >= 18 ? 'text-green-600' : sub.score >= 10 ? 'text-yellow-600' : 'text-slate-400'" x-text="sub.score + '/' + sub.max"></span>
+              </div>
+              <div class="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div class="h-full" :class="sub.score >= 18 ? 'bg-green-500' : sub.score >= 10 ? 'bg-yellow-400' : 'bg-slate-300'" :style="`width: ${(sub.score / sub.max) * 100}%`"></div>
+              </div>
+              <div class="text-xs text-slate-500 mt-0.5" x-text="sub.detail"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- 手动覆盖 (用户可改) -->
       <div class="space-y-2 text-sm">
-        <div><span class="text-slate-500">轮动位置:</span>
+        <div>
+          <span class="text-slate-500">轮动位置:</span>
           <select x-model="form.rotation_position" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs">
             <option value="leading">领涨 leading</option>
-            <option value="mid">中段 mid</option>
+            <option value="mid">中段 mid (默认, 用 auto)</option>
             <option value="late">末段 late</option>
             <option value="catchup">补涨 catchup</option>
           </select>
+          <span class="text-xs text-slate-400 ml-2">当前生效: <b x-text="report?.rotation?.rotation_position || '—'"></b></span>
         </div>
         <div><span class="text-slate-500">轮动链:</span> <input x-model="form.rotation_chain" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-96" placeholder="如: 算力主线 → 高低切补涨"></div>
         <div><span class="text-slate-500">资金流:</span> <input x-model="form.capital_flow" class="ml-2 px-2 py-1 border border-slate-300 rounded text-xs w-96" placeholder="如: BTC → ETH → SOL"></div>

@@ -445,6 +445,206 @@ def derive_signal(composite: float, target: float = None, current: float = None)
 
 
 # =============================================================
+# Phase C: 轮动定位量化 (4 子指标)
+# =============================================================
+
+# GICS 11 板块 → SPDR 板块 ETF 映射
+SECTOR_ETF = {
+    "Technology": "XLK",
+    "Communication Services": "XLC",
+    "Consumer Cyclical": "XLY",
+    "Consumer Discretionary": "XLY",  # 别名
+    "Consumer Defensive": "XLP",
+    "Consumer Staples": "XLP",  # 别名
+    "Healthcare": "XLV",
+    "Financial Services": "XLF",
+    "Financials": "XLF",  # 别名
+    "Industrials": "XLI",
+    "Energy": "XLE",
+    "Utilities": "XLU",
+    "Real Estate": "XLRE",
+    "Basic Materials": "XLB",
+    "Materials": "XLB",  # 别名
+}
+
+
+def _calc_return(closes: list, days_ago: int) -> Optional[float]:
+    """计算 N 日前的回报率 (N=days_ago)"""
+    if not closes or len(closes) < days_ago + 1:
+        return None
+    current = closes[-1]
+    past = closes[-days_ago - 1] if days_ago > 0 else closes[-1]
+    if not past or past == 0:
+        return None
+    return (current - past) / past * 100  # 百分比
+
+
+def _calc_avg_volume(volumes: list, days: int) -> Optional[float]:
+    """最近 N 日均量"""
+    if not volumes or len(volumes) < days:
+        return None
+    return sum(volumes[-days:]) / days
+
+
+def compute_rotation_metrics(
+    snap: StockSnapshot,
+    sector_etf_history: Optional[Dict[str, Any]] = None,
+    ticker_history: Optional[Dict[str, Any]] = None,
+    spy_history: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """轮动定位量化 - 4 个子指标 + 总分
+
+    数据需求 (任一缺失该子指标得 0):
+      - sector_etf_history: 板块 ETF 历史 (200d)
+      - ticker_history: 个股历史 (200d)
+      - spy_history: SPY 基准 (200d)
+      - Google Trends: cloud 不支持, 留接口给本地
+
+    返回:
+      sub_scores: {sector_relative, fund_heat, google_trend, ticker_relative}
+      total_score: 0-100
+      auto_position: leading/mid/late/catchup
+    """
+    result = {
+        "sub_scores": {
+            "sector_relative": {"score": 0, "max": 25, "detail": "无板块 ETF 数据", "available": False},
+            "fund_heat": {"score": 0, "max": 25, "detail": "无板块 ETF 数据", "available": False},
+            "google_trend": {"score": 0, "max": 25, "detail": "cloud 不支持 (需本地 pytrends)", "available": False},
+            "ticker_relative": {"score": 0, "max": 25, "detail": "无 ticker 历史数据", "available": False},
+        },
+        "total_score": 0,
+        "max_score": 100,
+        "auto_position": "mid",
+        "auto_position_label": "中段 (数据不足)",
+        "sector_etf": SECTOR_ETF.get(snap.sector) if snap.sector else None,
+        "sector": snap.sector or "N/A",
+    }
+
+    # ────────────────────────────────────────
+    # 1. 板块相对强弱 (板块 ETF 1m 涨幅 - SPY 1m 涨幅)
+    # ────────────────────────────────────────
+    if sector_etf_history and spy_history:
+        try:
+            sector_closes = sector_etf_history.get('c', [])
+            spy_closes = spy_history.get('c', [])
+            sector_1m = _calc_return(sector_closes, 21)
+            spy_1m = _calc_return(spy_closes, 21)
+            if sector_1m is not None and spy_1m is not None:
+                diff = sector_1m - spy_1m
+                if diff > 10:
+                    sub_score = 25
+                    level = "大幅跑赢 (+{:.1f}%)"
+                elif diff > 0:
+                    sub_score = 18
+                    level = "小幅跑赢 (+{:.1f}%)"
+                elif diff > -10:
+                    sub_score = 10
+                    level = "跑输 (-{:.1f}%)"
+                else:
+                    sub_score = 0
+                    level = "大幅跑输 (-{:.1f}%)"
+                result["sub_scores"]["sector_relative"] = {
+                    "score": sub_score, "max": 25, "available": True,
+                    "detail": "板块 ETF 1m {} (板块: +{:.1f}%, SPY: +{:.1f}%)".format(
+                        level.format(abs(diff)), sector_1m, spy_1m),
+                }
+        except Exception as e:
+            pass
+
+    # ────────────────────────────────────────
+    # 2. 板块资金热度 (板块 ETF 20d vs 60d 均量比率)
+    # ────────────────────────────────────────
+    if sector_etf_history:
+        try:
+            volumes = sector_etf_history.get('v', [])
+            vol_20d = _calc_avg_volume(volumes, 20)
+            vol_60d = _calc_avg_volume(volumes, 60)
+            if vol_20d and vol_60d and vol_60d > 0:
+                ratio = vol_20d / vol_60d
+                if ratio > 1.5:
+                    sub_score = 25
+                    level = "资金涌入 ({:.2f}x)"
+                elif ratio > 1.2:
+                    sub_score = 18
+                    level = "温和放量 ({:.2f}x)"
+                elif ratio > 0.8:
+                    sub_score = 12
+                    level = "成交正常 ({:.2f}x)"
+                else:
+                    sub_score = 5
+                    level = "资金流出 ({:.2f}x)"
+                result["sub_scores"]["fund_heat"] = {
+                    "score": sub_score, "max": 25, "available": True,
+                    "detail": "板块 ETF 20d/60d 均量比: " + level.format(ratio),
+                }
+        except Exception as e:
+            pass
+
+    # ────────────────────────────────────────
+    # 3. Google Trends (cloud 留接口)
+    # ────────────────────────────────────────
+    # 留 0 分 + 标注不可用, Phase C+ 可在本地集成 pytrends
+    # result["sub_scores"]["google_trend"] 已在初始化设 0
+
+    # ────────────────────────────────────────
+    # 4. 个股相对表现 (ticker 1m - SPY 1m)
+    # ────────────────────────────────────────
+    if ticker_history and spy_history:
+        try:
+            ticker_closes = ticker_history.get('c', [])
+            spy_closes = spy_history.get('c', [])
+            ticker_1m = _calc_return(ticker_closes, 21)
+            spy_1m = _calc_return(spy_closes, 21)
+            ticker_3m = _calc_return(ticker_closes, 63)
+            spy_3m = _calc_return(spy_closes, 63)
+            if ticker_1m is not None and spy_1m is not None:
+                diff = ticker_1m - spy_1m
+                if diff > 10:
+                    sub_score = 25
+                    level = "强势 (1m vs SPY +{:.1f}%)"
+                elif diff > 5:
+                    sub_score = 18
+                    level = "偏强 (+{:.1f}%)"
+                elif diff > -5:
+                    sub_score = 12
+                    level = "中性 ({:+.1f}%)"
+                else:
+                    sub_score = 0
+                    level = "弱势 ({:+.1f}%)"
+                # 3m 也算上 (信息含量)
+                extra = ""
+                if ticker_3m is not None and spy_3m is not None:
+                    diff_3m = ticker_3m - spy_3m
+                    extra = f" | 3m vs SPY {diff_3m:+.1f}%"
+                result["sub_scores"]["ticker_relative"] = {
+                    "score": sub_score, "max": 25, "available": True,
+                    "detail": level.format(diff) + extra,
+                }
+        except Exception as e:
+            pass
+
+    # ────────────────────────────────────────
+    # 5. 综合判断
+    # ────────────────────────────────────────
+    total = sum(s["score"] for s in result["sub_scores"].values())
+    result["total_score"] = total
+    if total >= 80:
+        result["auto_position"] = "leading"
+        result["auto_position_label"] = "高确信领涨"
+    elif total >= 60:
+        result["auto_position"] = "mid"
+        result["auto_position_label"] = "中段持有"
+    elif total >= 40:
+        result["auto_position"] = "late"
+        result["auto_position_label"] = "末段谨慎"
+    else:
+        result["auto_position"] = "catchup"
+        result["auto_position_label"] = "低谷/补涨"
+
+    return result
+
+
+# =============================================================
 # Phase B: 蓝海框架 (MPEVL 5 维 + 5 大方法 + 信息差 4 级)
 # =============================================================
 

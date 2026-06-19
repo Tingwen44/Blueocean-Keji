@@ -350,5 +350,24 @@ function appData() {
       };
       return map[level] || 'text-slate-500';
     },
+
+    // Phase C: 轮动定位 helper
+    get rotationAutoColor() {
+      const p = this.report?.rotation?.auto_metrics?.auto_position;
+      if (p === 'leading') return 'text-green-700';
+      if (p === 'mid') return 'text-blue-600';
+      if (p === 'late') return 'text-orange-500';
+      if (p === 'catchup') return 'text-red-600';
+      return 'text-slate-500';
+    },
+    rotationSubName(key) {
+      const map = {
+        sector_relative: '① 板块相对强弱',
+        fund_heat: '② 板块资金热度',
+        google_trend: '③ 谷歌搜索指数',
+        ticker_relative: '④ 个股相对表现',
+      };
+      return map[key] || key;
+    },
   };
 }

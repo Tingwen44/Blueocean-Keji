@@ -134,6 +134,8 @@ class RotationBlock(BaseModel):
     rotation_chain: str
     capital_flow: str
     relative_performance: str
+    # Phase C: 自动量化的轮动指标
+    auto_metrics: Optional[dict] = None  # 见 compute_rotation_metrics 返回结构
 
 
 # ────────────────────────────────────────

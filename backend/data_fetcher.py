@@ -339,6 +339,60 @@ def fetch_macro_indicators() -> Dict[str, Any]:
 
 
 # =============================================================
+# Phase C: 历史价拉取 (Finnhub candle API, cloud 友好)
+# =============================================================
+
+def fetch_history_prices(symbol: str, days: int = 200) -> Optional[Dict[str, Any]]:
+    """拉历史日线价 (Phase C: 板块轮动 / 个股相对表现)
+
+    优先 Finnhub (cloud 友好), yfinance fallback (本地友好)
+    返回: {c: [close...], h, l, o, t: [timestamp...], v: [volume...], s: 'ok'}
+
+    注意: 不缓存 (拉一次几十 KB, 不重)
+    """
+    _setup_proxy()
+    import time as _t
+
+    # 1) Finnhub 优先 (60 calls/min 免费额度)
+    api_key = os.environ.get('FINNHUB_API_KEY')
+    if api_key:
+        try:
+            to_ts = int(_t.time())
+            from_ts = to_ts - days * 24 * 3600
+            url = f"https://finnhub.io/api/v1/stock/candle?symbol={symbol.upper()}&resolution=D&from={from_ts}&to={to_ts}&token={api_key}"
+            with httpx.Client(timeout=10.0) as c:
+                r = c.get(url)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('s') == 'ok' and data.get('c'):
+                    return data
+                # s = "no_data" 表示没有
+        except Exception as e:
+            print(f"[history] Finnhub {symbol} 失败: {e}")
+
+    # 2) yfinance fallback
+    try:
+        import yfinance as yf
+        t = yf.Ticker(symbol)
+        h = t.history(period=f"{days}d")
+        if h is not None and len(h) > 0:
+            import pandas as pd
+            return {
+                "c": h['Close'].tolist(),
+                "h": h['High'].tolist(),
+                "l": h['Low'].tolist(),
+                "o": h['Open'].tolist(),
+                "v": h['Volume'].tolist(),
+                "t": [int(d.timestamp()) for d in h.index],
+                "s": "ok",
+            }
+    except Exception as e:
+        print(f"[history] yfinance {symbol} 失败: {e}")
+
+    return None
+
+
+# =============================================================
 # Market Sentiment (CNN Fear & Greed Index) - Phase A
 # =============================================================
 import time as _time
