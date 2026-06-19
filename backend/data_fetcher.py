@@ -48,6 +48,43 @@ def _setup_proxy():
 # 主入口: fallback 链
 # ════════════════════════════════════════
 
+# ════════════════════════════════════════
+# Ticker 别名映射 (用户友好 → 交易所代码)
+# ════════════════════════════════════════
+TICKER_ALIASES = {
+    # 韩国
+    "HYNIX": "000660.KS",
+    "SK_HYNIX": "000660.KS",
+    "SKHYNIX": "000660.KS",
+    "SAMSUNG": "005930.KS",
+    "KAKAO": "035720.KS",
+    # 港股
+    "TENCENT": "0700.HK",
+    "ALI": "9988.HK",  # 阿里巴巴
+    "MEITUAN": "3690.HK",
+    "JD": "9618.HK",
+    "BABA": "9988.HK",
+    # 美股双类别
+    "GOOG": "GOOGL",  # 选有 vote 的 A 类
+    "BRK": "BRK.B",  # 伯克希尔 B 类
+    "BRK_B": "BRK.B",
+    # 常见错拼
+    "BERKSHIRE": "BRK.B",
+    "TESLA": "TSLA",  # 同
+    "APPLE": "AAPL",
+    "MICROSOFT": "MSFT",
+    "NVIDIA": "NVDA",
+}
+
+
+def resolve_ticker(ticker: str) -> str:
+    """把用户友好 ticker 转成交易所代码, 没找到返原 ticker"""
+    if not ticker:
+        return ticker
+    t = ticker.strip().upper()
+    return TICKER_ALIASES.get(t, t)
+
+
 def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
     """拉取单只股票的全量快照
 
@@ -55,9 +92,11 @@ def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
       1. yfinance (本地优先, 速度快数据全)
       2. Finnhub (云端 fallback, yfinance 被 Yahoo 限流时)
       3. 最小 snapshot (两源都挂时, data_quality="low")
+
+    支持 ticker 别名 (HYNIX → 000660.KS), 见 TICKER_ALIASES
     """
     _setup_proxy()
-    ticker = ticker.upper()
+    ticker = resolve_ticker(ticker)
 
     # 1) yfinance 优先
     snap = _try_yfinance(ticker)
@@ -69,12 +108,12 @@ def fetch_stock_snapshot(ticker: str) -> StockSnapshot:
     if snap is not None:
         return snap
 
-    # 3) 都失败 → 最小 snapshot
+    # 3) 都失败 → 最小 snapshot + 友好提示
     print(f"[data_fetcher] yfinance + Finnhub 全部失败 {ticker}, 返回空 snapshot")
     return StockSnapshot(
         ticker=ticker,
         name=ticker,
-        sector="数据拉取失败",
+        sector="数据拉取失败 (提示: 试试用完整 ticker, 如 000660.KS / 0700.HK)",
         industry="N/A",
         data_quality="low",
     )

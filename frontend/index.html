@@ -28,8 +28,9 @@
       <span class="w-2 h-2 rounded-full" :class="llmEnabled ? 'bg-green-500' : 'bg-slate-300'"></span>
       <span class="text-slate-600" x-text="llmStatusLabel"></span>
     </div>
-    <input x-model="ticker" @keydown.enter="runAnalysis()" type="text" placeholder="输入 ticker (如 NVDA/COHR)"
-      class="px-3 py-1.5 border border-slate-300 rounded text-sm w-48 focus:outline-none focus:border-blue-500">
+    <input x-model="ticker" @keydown.enter="runAnalysis()" type="text" placeholder="NVDA / HYNIX / TENCENT (自动转交易所代码)"
+      title="美股: NVDA / 港股: 0700.HK / 韩股: 000660.KS / 别名: HYNIX TENCENT SAMSUNG"
+      class="px-3 py-1.5 border border-slate-300 rounded text-sm w-64 focus:outline-none focus:border-blue-500">
     <button @click="runAnalysis()" :disabled="loading"
       class="px-4 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
       <span x-show="!loading">分析 →</span>
