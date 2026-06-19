@@ -369,5 +369,24 @@ function appData() {
       };
       return map[key] || key;
     },
+
+    // Phase D: 风险评分 helper
+    get riskSignalColor() {
+      const s = this.report?.risk?.auto_scores?.signal;
+      if (s === 'extreme_risk') return 'text-red-700';
+      if (s === 'high_risk') return 'text-red-600';
+      if (s === 'medium_risk') return 'text-orange-500';
+      if (s === 'low_risk') return 'text-green-600';
+      return 'text-slate-500';
+    },
+    riskSubName(key) {
+      const map = {
+        macro: '① 宏观风险',
+        sector: '② 行业风险',
+        competitor: '③ 竞争对手风险',
+        company: '④ 公司内部风险',
+      };
+      return map[key] || key;
+    },
   };
 }

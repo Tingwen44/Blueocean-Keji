@@ -20,7 +20,8 @@ from pydantic import BaseModel
 from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment, fetch_history_prices
 from scoring import (
     scan_fundamental, scan_calendar, scan_top_bottom_signals,
-    compute_composite_score, derive_signal, compute_blue_ocean_scores, compute_rotation_metrics,
+    compute_composite_score, derive_signal, compute_blue_ocean_scores,
+    compute_rotation_metrics, compute_risk_scores,
 )
 from llm_helper import suggest_chain_positioning, suggest_catalysts
 from database import init_db, save_analysis, list_analyses, get_analysis, get_latest_for_ticker
@@ -365,7 +366,7 @@ async def generate_one_pager(
         except Exception as e:
             print(f"[app] 拉取市场情绪失败, 用规则推断: {e}")
             tb.sentiment_source = "rule"
-        # Step 8 (用户填)
+        # Step 8 (Phase D: 自动评分 + 用户填)
         from schemas import RiskItem
         risks_list = []
         for r in req.risks:
@@ -373,6 +374,15 @@ async def generate_one_pager(
                 risks_list.append(RiskItem(**r))
             except Exception:
                 pass
+
+        # Phase D: 自动评分的高风险触发转成 RiskItem (前置)
+        for alert in risk_scores.get('alerts', []):
+            risks_list.insert(0, RiskItem(
+                description=f"[自动] {alert}",
+                trigger_signal="见 auto_scores.sub_scores 详情",
+                severity="high" if "危机" in alert or "恶化" in alert else "medium",
+            ))
+
         if not risks_list:
             risks_list = [RiskItem(
                 description="需手动填写关键风险",
@@ -384,6 +394,7 @@ async def generate_one_pager(
             risks=risks_list,
             stop_loss_price=req.stop_loss_price,
             stop_loss_pct=req.stop_loss_pct,
+            auto_scores=risk_scores,
         )
 
         # 综合分
@@ -396,6 +407,21 @@ async def generate_one_pager(
         blue_ocean = compute_blue_ocean_scores(
             snap=snap, fund=fund, cal=cal, tb=tb,
             market_sentiment_score=market_sent_score,
+        )
+
+        # Phase D: 风险定价自动评分 (4 类: macro/sector/competitor/company)
+        try:
+            macro_data = fetch_macro_indicators()
+        except Exception:
+            macro_data = None
+        # sector_hist 已经在 Phase C 拉过 (sector_hist 局部变量), 复用
+        # ticker_hist 也在 Phase C 拉过
+        risk_scores = compute_risk_scores(
+            snap=snap,
+            macro_indicators=macro_data,
+            sector_history=sector_hist,
+            spy_history=spy_hist,
+            ticker_history=ticker_hist,
         )
 
         # 1 句结论

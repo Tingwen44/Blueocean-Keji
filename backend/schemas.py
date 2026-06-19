@@ -177,6 +177,8 @@ class RiskBlock(BaseModel):
     risks: List[RiskItem]
     stop_loss_price: Optional[float] = None
     stop_loss_pct: Optional[float] = None
+    # Phase D: 自动 4 类风险评分
+    auto_scores: Optional[dict] = None  # 见 compute_risk_scores 返回结构
 
 
 # ────────────────────────────────────────

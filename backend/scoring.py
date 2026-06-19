@@ -645,6 +645,355 @@ def compute_rotation_metrics(
 
 
 # =============================================================
+# Phase D: 风险定价自动评分 (4 类 × 25/25/30/20 权重)
+# =============================================================
+
+# 各行业关键指标中位数 (用于 competitor 风险比较)
+INDUSTRY_MEDIAN_GROSS_MARGIN = {
+    "Technology": 55,
+    "Communication Services": 45,
+    "Consumer Cyclical": 28,
+    "Consumer Defensive": 38,
+    "Healthcare": 65,
+    "Financial Services": 60,
+    "Industrials": 25,
+    "Energy": 35,
+    "Utilities": 50,
+    "Real Estate": 60,
+    "Basic Materials": 30,
+}
+
+INDUSTRY_MEDIAN_REVENUE_GROWTH = {
+    "Technology": 12,
+    "Communication Services": 8,
+    "Consumer Cyclical": 6,
+    "Consumer Defensive": 4,
+    "Healthcare": 10,
+    "Financial Services": 7,
+    "Industrials": 5,
+    "Energy": 3,
+    "Utilities": 2,
+    "Real Estate": 4,
+    "Basic Materials": 5,
+}
+
+# 高集中度行业 (竞争对手风险加分)
+HIGH_CONCENTRATION_INDUSTRIES = {
+    "Semiconductors", "Application Software", "Internet Software & Services",
+    "Auto Manufacturers", "Pharmaceutical", "Aerospace & Defense",
+    "Internet Content & Information", "Software—Application",
+}
+
+
+def compute_risk_scores(
+    snap: StockSnapshot,
+    macro_indicators: Optional[Dict[str, Any]] = None,
+    sector_history: Optional[Dict[str, Any]] = None,
+    spy_history: Optional[Dict[str, Any]] = None,
+    ticker_history: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Phase D: 4 类风险自动评分
+
+    权重 (场景 C 默认, 个股风控):
+      ① 宏观风险 (macro)   : 25%
+      ② 行业风险 (sector)  : 25%
+      ③ 竞争对手风险 (competitor): 20%
+      ④ 公司内部风险 (company): 30%
+
+    返回:
+      sub_scores: 4 类 0-10 分 (越高越危险)
+      weighted_score: 0-10 加权综合
+      signal: low_risk / medium_risk / high_risk / extreme_risk
+      alerts: 高风险触发列表
+    """
+    sub_scores = {
+        "macro": {"score": 0, "details": [], "available": False},
+        "sector": {"score": 0, "details": [], "available": False},
+        "competitor": {"score": 0, "details": [], "available": False},
+        "company": {"score": 0, "details": [], "available": False},
+    }
+    alerts = []
+
+    # ────────────────────────────────────────
+    # ① 宏观风险 (0-10)
+    # ────────────────────────────────────────
+    if macro_indicators and macro_indicators.get("status") == "ok":
+        macro_score = 0
+        ind = macro_indicators.get("indicators", {})
+
+        # 10y yield 利率
+        yield_10y = ind.get("10y_yield")
+        if yield_10y is not None:
+            if yield_10y > 4.5:
+                macro_score += 3
+                sub_scores["macro"]["details"].append(f"10y 利率 {yield_10y:.2f}% 高位 (+3)")
+            elif yield_10y > 3.5:
+                macro_score += 2
+                sub_scores["macro"]["details"].append(f"10y 利率 {yield_10y:.2f}% 偏高 (+2)")
+            elif yield_10y > 2.5:
+                macro_score += 1
+                sub_scores["macro"]["details"].append(f"10y 利率 {yield_10y:.2f}% 中位 (+1)")
+
+        # 联储利率
+        fed_funds = ind.get("fed_funds")
+        if fed_funds is not None:
+            if fed_funds > 5.0:
+                macro_score += 2
+                sub_scores["macro"]["details"].append(f"联储利率 {fed_funds:.2f}% 限制性 (+2)")
+            elif fed_funds > 4.0:
+                macro_score += 1
+                sub_scores["macro"]["details"].append(f"联储利率 {fed_funds:.2f}% (+1)")
+
+        # CPI
+        cpi = ind.get("CPI")
+        if cpi is not None:
+            # CPI 是水平 (e.g. 320), 不直接用作风险分, 改用其同比
+            # 这里没 yoy, 跳过 (FRED API 限制)
+            pass
+
+        # 失业率 (过低=过热)
+        unrate = ind.get("unemployment")
+        if unrate is not None:
+            if unrate < 3.5:
+                macro_score += 2
+                sub_scores["macro"]["details"].append(f"失业率 {unrate:.1f}% 过热 (+2)")
+
+        sub_scores["macro"]["score"] = min(10, macro_score)
+        sub_scores["macro"]["available"] = True
+    else:
+        sub_scores["macro"]["details"].append("FRED 未配置, 用 sentiment 反向 (Phase A 已用 CNN)")
+        # 用 CNN sentiment 反向 (越恐惧 = 宏观给机会, 越贪婪 = 风险)
+        # 这里由 caller 传 market_sentiment_score, 简单放 5 = 中性
+        sub_scores["macro"]["score"] = 5
+        sub_scores["macro"]["available"] = False
+
+    # ────────────────────────────────────────
+    # ② 行业风险 (0-10)
+    # ────────────────────────────────────────
+    sector_score = 0
+    if sector_history and spy_history:
+        sector_closes = sector_history.get('c', [])
+        spy_closes = spy_history.get('c', [])
+
+        # 板块 1m vs SPY
+        sector_1m = _calc_return(sector_closes, 21)
+        spy_1m = _calc_return(spy_closes, 21)
+        if sector_1m is not None and spy_1m is not None:
+            diff = sector_1m - spy_1m
+            if diff < -10:
+                sector_score += 5
+                sub_scores["sector"]["details"].append(f"板块 1m 跑输 SPY {diff:.1f}% (+5)")
+            elif diff < -3:
+                sector_score += 3
+                sub_scores["sector"]["details"].append(f"板块 1m 跑输 SPY {diff:.1f}% (+3)")
+            elif diff < 0:
+                sector_score += 1
+                sub_scores["sector"]["details"].append(f"板块 1m 微跑输 SPY {diff:.1f}% (+1)")
+
+        # 板块波动率 (20d std / SPY 20d std)
+        if len(sector_closes) >= 20 and len(spy_closes) >= 20:
+            sector_std = _std(sector_closes[-20:]) / (sum(sector_closes[-20:]) / 20) * 100  # CV%
+            spy_std = _std(spy_closes[-20:]) / (sum(spy_closes[-20:]) / 20) * 100
+            vol_ratio = sector_std / spy_std if spy_std > 0 else 1
+            if vol_ratio > 2:
+                sector_score += 3
+                sub_scores["sector"]["details"].append(f"板块波动率 {vol_ratio:.2f}x SPY (+3)")
+            elif vol_ratio > 1.5:
+                sector_score += 2
+                sub_scores["sector"]["details"].append(f"板块波动率 {vol_ratio:.2f}x SPY (+2)")
+            elif vol_ratio > 1.2:
+                sector_score += 1
+                sub_scores["sector"]["details"].append(f"板块波动率 {vol_ratio:.2f}x SPY (+1)")
+
+        sub_scores["sector"]["available"] = True
+    else:
+        sub_scores["sector"]["details"].append("无板块 ETF 历史")
+
+    # ticker 自身波动率 (用 beta 近似)
+    if snap.beta:
+        if snap.beta > 2:
+            sector_score += 2
+            sub_scores["sector"]["details"].append(f"Beta {snap.beta:.2f} 高 (+2)")
+        elif snap.beta > 1.5:
+            sector_score += 1
+            sub_scores["sector"]["details"].append(f"Beta {snap.beta:.2f} 偏高 (+1)")
+
+    sub_scores["sector"]["score"] = min(10, sector_score)
+
+    # ────────────────────────────────────────
+    # ③ 竞争对手风险 (0-10)
+    # ────────────────────────────────────────
+    competitor_score = 0
+
+    # 毛利率 vs 行业中位数
+    if snap.gross_margin is not None and snap.sector in INDUSTRY_MEDIAN_GROSS_MARGIN:
+        industry_gm = INDUSTRY_MEDIAN_GROSS_MARGIN[snap.sector]
+        diff = snap.gross_margin - industry_gm
+        if diff < -20:
+            competitor_score += 5
+            sub_scores["competitor"]["details"].append(
+                f"毛利率 {snap.gross_margin:.0f}% 远低于行业中位 {industry_gm}% (+5)"
+            )
+        elif diff < -10:
+            competitor_score += 3
+            sub_scores["competitor"]["details"].append(
+                f"毛利率 {snap.gross_margin:.0f}% 低于行业中位 {industry_gm}% (+3)"
+            )
+        elif diff < -5:
+            competitor_score += 1
+            sub_scores["competitor"]["details"].append(
+                f"毛利率 {snap.gross_margin:.0f}% 略低 (+1)"
+            )
+
+    # 营收增速 vs 行业中位数
+    if snap.revenue_growth_yoy is not None and snap.sector in INDUSTRY_MEDIAN_REVENUE_GROWTH:
+        industry_g = INDUSTRY_MEDIAN_REVENUE_GROWTH[snap.sector]
+        diff = snap.revenue_growth_yoy - industry_g
+        if diff < -20:
+            competitor_score += 4
+            sub_scores["competitor"]["details"].append(
+                f"营收 YoY {snap.revenue_growth_yoy:.0f}% 大幅落后行业 {industry_g}% (+4)"
+            )
+        elif diff < -10:
+            competitor_score += 2
+            sub_scores["competitor"]["details"].append(
+                f"营收 YoY {snap.revenue_growth_yoy:.0f}% 落后行业 {industry_g}% (+2)"
+            )
+
+    # 高集中度行业标记 (竞争更激烈)
+    if snap.industry and snap.industry in HIGH_CONCENTRATION_INDUSTRIES:
+        competitor_score += 2
+        sub_scores["competitor"]["details"].append(
+            f"高集中度行业: {snap.industry} (+2)"
+        )
+
+    sub_scores["competitor"]["score"] = min(10, competitor_score)
+    sub_scores["competitor"]["available"] = bool(snap.sector)
+
+    # ────────────────────────────────────────
+    # ④ 公司内部风险 (0-10)
+    # ────────────────────────────────────────
+    company_score = 0
+
+    # 流动比率 (currentRatio)
+    if snap.current_ratio is not None:
+        if snap.current_ratio < 1:
+            company_score += 5
+            sub_scores["company"]["details"].append(
+                f"流动比率 {snap.current_ratio:.2f} < 1 (流动性危机) (+5)"
+            )
+            alerts.append(f"流动性危机: current ratio {snap.current_ratio:.2f}")
+        elif snap.current_ratio < 1.5:
+            company_score += 2
+            sub_scores["company"]["details"].append(
+                f"流动比率 {snap.current_ratio:.2f} 偏低 (+2)"
+            )
+
+    # 负债/权益 (debtToEquity, Finnhub 返百分比, 200 = 200%)
+    if snap.debt_to_equity is not None:
+        if snap.debt_to_equity > 200:
+            company_score += 5
+            sub_scores["company"]["details"].append(
+                f"负债/权益 {snap.debt_to_equity:.0f}% 极高 (+5)"
+            )
+            alerts.append(f"高负债: D/E {snap.debt_to_equity:.0f}%")
+        elif snap.debt_to_equity > 100:
+            company_score += 2
+            sub_scores["company"]["details"].append(
+                f"负债/权益 {snap.debt_to_equity:.0f}% 高 (+2)"
+            )
+
+    # 自由现金流
+    if snap.free_cashflow_usd_bil is not None:
+        if snap.free_cashflow_usd_bil < 0:
+            company_score += 5
+            sub_scores["company"]["details"].append(
+                f"FCF {snap.free_cashflow_usd_bil:.1f}B 转负 (融资风险) (+5)"
+            )
+            alerts.append("现金流恶化")
+        elif snap.free_cashflow_usd_bil < 0.5:
+            company_score += 2
+            sub_scores["company"]["details"].append(
+                f"FCF {snap.free_cashflow_usd_bil:.1f}B 偏弱 (+2)"
+            )
+
+    # 内部人持股
+    if snap.held_percent_insiders is not None:
+        if snap.held_percent_insiders < 1:
+            company_score += 2
+            sub_scores["company"]["details"].append(
+                f"内部人持股 {snap.held_percent_insiders:.1f}% < 1% (+2)"
+            )
+        elif snap.held_percent_insiders < 5:
+            company_score += 1
+            sub_scores["company"]["details"].append(
+                f"内部人持股 {snap.held_percent_insiders:.1f}% 偏低 (+1)"
+            )
+
+    # 做空比例
+    if snap.short_percent_of_float is not None:
+        if snap.short_percent_of_float > 20:
+            company_score += 3
+            sub_scores["company"]["details"].append(
+                f"做空比例 {snap.short_percent_of_float:.1f}% 极高 (市场看空) (+3)"
+            )
+            alerts.append(f"高做空: {snap.short_percent_of_float:.1f}%")
+        elif snap.short_percent_of_float > 10:
+            company_score += 1
+            sub_scores["company"]["details"].append(
+                f"做空比例 {snap.short_percent_of_float:.1f}% 高 (+1)"
+            )
+
+    sub_scores["company"]["score"] = min(10, company_score)
+    sub_scores["company"]["available"] = True
+
+    # ────────────────────────────────────────
+    # 综合 (场景 C 默认权重: 25/25/20/30)
+    # ────────────────────────────────────────
+    WEIGHTS = {"macro": 0.25, "sector": 0.25, "competitor": 0.20, "company": 0.30}
+    weighted = (
+        sub_scores["macro"]["score"] * WEIGHTS["macro"]
+        + sub_scores["sector"]["score"] * WEIGHTS["sector"]
+        + sub_scores["competitor"]["score"] * WEIGHTS["competitor"]
+        + sub_scores["company"]["score"] * WEIGHTS["company"]
+    )
+    weighted = round(weighted, 2)
+
+    if weighted >= 7.5:
+        signal = "extreme_risk"  # 改个名, 跟 Phase D 语义对齐
+        signal_label = "✗ 极高风险, 建议减仓"
+    elif weighted >= 6.0:
+        signal = "high_risk"
+        signal_label = "⚠ 高风险"
+    elif weighted >= 4.0:
+        signal = "medium_risk"
+        signal_label = "中风险"
+    else:
+        signal = "low_risk"
+        signal_label = "✓ 低风险"
+
+    return {
+        "sub_scores": sub_scores,
+        "weighted_score": weighted,
+        "signal": signal,
+        "signal_label": signal_label,
+        "weights": WEIGHTS,
+        "alerts": alerts,
+        "sector": snap.sector or "N/A",
+        "industry": snap.industry or "N/A",
+    }
+
+
+def _std(values: list) -> float:
+    """标准差"""
+    if not values or len(values) < 2:
+        return 0
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    return variance ** 0.5
+
+
+# =============================================================
 # Phase B: 蓝海框架 (MPEVL 5 维 + 5 大方法 + 信息差 4 级)
 # =============================================================
 
