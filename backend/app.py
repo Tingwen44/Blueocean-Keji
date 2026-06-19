@@ -366,6 +366,26 @@ async def generate_one_pager(
         except Exception as e:
             print(f"[app] 拉取市场情绪失败, 用规则推断: {e}")
             tb.sentiment_source = "rule"
+
+        # Phase D: 风险定价自动评分 (4 类: macro/sector/competitor/company)
+        try:
+            macro_data = fetch_macro_indicators()
+        except Exception:
+            macro_data = None
+        # sector_hist/ticker_hist/spy_hist 已在 Phase C 拉过 (局部变量), 复用
+        try:
+            risk_scores = compute_risk_scores(
+                snap=snap,
+                macro_indicators=macro_data,
+                sector_history=sector_hist,
+                spy_history=spy_hist,
+                ticker_history=ticker_hist,
+            )
+        except Exception as e:
+            print(f"[Phase D] 风险评分失败, 降级为空: {type(e).__name__}: {e}")
+            risk_scores = {"sub_scores": {}, "weighted_score": 0, "signal": "medium_risk",
+                           "signal_label": "中风险 (评分失败)", "alerts": [], "sector": snap.sector or "N/A"}
+
         # Step 8 (Phase D: 自动评分 + 用户填)
         from schemas import RiskItem
         risks_list = []
@@ -407,21 +427,6 @@ async def generate_one_pager(
         blue_ocean = compute_blue_ocean_scores(
             snap=snap, fund=fund, cal=cal, tb=tb,
             market_sentiment_score=market_sent_score,
-        )
-
-        # Phase D: 风险定价自动评分 (4 类: macro/sector/competitor/company)
-        try:
-            macro_data = fetch_macro_indicators()
-        except Exception:
-            macro_data = None
-        # sector_hist 已经在 Phase C 拉过 (sector_hist 局部变量), 复用
-        # ticker_hist 也在 Phase C 拉过
-        risk_scores = compute_risk_scores(
-            snap=snap,
-            macro_indicators=macro_data,
-            sector_history=sector_hist,
-            spy_history=spy_hist,
-            ticker_history=ticker_hist,
         )
 
         # 1 句结论
