@@ -408,15 +408,46 @@ def fetch_macro_indicators() -> Dict[str, Any]:
 def fetch_history_prices(symbol: str, days: int = 200) -> Optional[Dict[str, Any]]:
     """拉历史日线价 (Phase C: 板块轮动 / 个股相对表现)
 
-    优先 Finnhub (cloud 友好, 但只支持股票不支持 ETF), yfinance fallback
-    返回: {c: [close...], h, l, o, t: [timestamp...], v: [volume...], s: 'ok'}
+    三源 fallback:
+      1. Tiingo daily/prices (优先, 支持美股 + ETF, Railway 友好)
+      2. Finnhub candle (美股个股, 不支持 ETF)
+      3. yfinance (本地, 带 6s 超时)
 
-    注意: yfinance 在 cloud 上会 hangs, 用 ThreadPoolExecutor 加 6s 超时
+    返回: {c: [close...], h, l, o, t: [timestamp...], v: [volume...], s: 'ok'}
     """
     _setup_proxy()
     import time as _t
 
-    # 1) Finnhub 优先 (60 calls/min 免费额度, 但不支持 ETF ticker)
+    # 1) Tiingo 优先 (支持美股 + ETF, free 500 requests/day, Railway 友好)
+    tiingo_key = os.environ.get('TIINGO_API_KEY')
+    if tiingo_key:
+        try:
+            to_ts = int(_t.time())
+            from_ts = to_ts - days * 24 * 3600
+            from_date = _t.strftime('%Y-%m-%d', _t.gmtime(from_ts))
+            to_date = _t.strftime('%Y-%m-%d', _t.gmtime(to_ts))
+            url = f"https://api.tiingo.com/tiingo/daily/{symbol.upper()}/prices?token={tiingo_key}&startDate={from_date}&endDate={to_date}&format=json"
+            with httpx.Client(timeout=10.0) as c:
+                r = c.get(url)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list) and len(data) > 0:
+                    return {
+                        "c": [d['close'] for d in data],
+                        "h": [d['high'] for d in data],
+                        "l": [d['low'] for d in data],
+                        "o": [d['open'] for d in data],
+                        "v": [d['volume'] for d in data],
+                        "t": [int(_t.mktime(_t.strptime(d['date'][:10], '%Y-%m-%d'))) for d in data],
+                        "s": "ok",
+                    }
+                # Tiingo 返 [] 表示该 ticker 不支持 (常见: 韩股港股)
+            elif r.status_code == 404:
+                print(f"[history] Tiingo {symbol} 404 Not found (免费档不支持此 ticker)")
+        except Exception as e:
+            print(f"[history] Tiingo {symbol} 失败: {type(e).__name__}: {e}")
+
+    # 2) Finnhub candle (美股个股, 不支持 ETF)
     api_key = os.environ.get('FINNHUB_API_KEY')
     if api_key:
         try:
@@ -429,11 +460,10 @@ def fetch_history_prices(symbol: str, days: int = 200) -> Optional[Dict[str, Any
                 data = r.json()
                 if data.get('s') == 'ok' and data.get('c'):
                     return data
-                # s = "no_data" 表示没有 (常见: ETF 不支持)
         except Exception as e:
             print(f"[history] Finnhub {symbol} 失败: {e}")
 
-    # 2) yfinance fallback (带超时, 避免 datacenter IP hangs)
+    # 3) yfinance fallback (带 6s 超时)
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(_yfinance_history_sync, symbol, days)
