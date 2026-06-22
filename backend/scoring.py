@@ -12,7 +12,7 @@ import os
 from datetime import datetime, date
 from typing import List, Optional, Dict, Any
 from schemas import (
-    StockSnapshot, FundamentalScan, CalendarBlock,
+    StockSnapshot, FundamentalScan,
     TopBottomBlock, TopBottomSignal, OnePagerReport
 )
 
@@ -127,70 +127,9 @@ def scan_fundamental(snap: StockSnapshot) -> FundamentalScan:
 
 
 # ────────────────────────────────────────
-# Step 5: 日历+事件叠加
+# Step 5: 日历+事件 (Phase 移除, 用户判断价值不大)
 # ────────────────────────────────────────
-def scan_calendar(snap: StockSnapshot) -> CalendarBlock:
-    """当前距关键日历节点的天数"""
-    today = date.today()
-
-    # 季度判断
-    quarter = (today.month - 1) // 3 + 1
-    current_quarter = f"Q{quarter} {today.year}"
-
-    # 距中期选举 (2026/11/3)
-    try:
-        midterm = date(2026, 11, 3)
-        days_to_midterm = (midterm - today).days
-    except Exception:
-        days_to_midterm = None
-
-    # 距鲍威尔卸任 (2026/5/15 假设)
-    try:
-        powell_end = date(2026, 5, 15)
-        days_to_powell = (powell_end - today).days
-    except Exception:
-        days_to_powell = None
-
-    # 日历效应
-    month = today.month
-    if month in [9]:
-        cal_effect = "9月 (历史最差月份, Citadel 统计)"
-    elif month in [10, 11, 12]:
-        cal_effect = "10-12月 (Uptober + 圣诞节行情, 历史偏强)"
-    elif month in [1, 2]:
-        cal_effect = "1-2月 (年初再平衡, 历史中性偏强)"
-    elif month in [5, 6, 7, 8]:
-        cal_effect = "5-8月 (Sell in May 弱化, 财报季驱动)"
-    else:
-        cal_effect = "3-4月 (财报季, 中性)"
-
-    # 宏观事件 (根据当前日期 + 已知日历)
-    macro_events = []
-    if days_to_midterm is not None and 0 < days_to_midterm < 180:
-        macro_events.append(f"距中期选举 {days_to_midterm} 天 (政策托底预期)")
-    if days_to_powell is not None and 0 < days_to_powell < 90:
-        macro_events.append(f"距鲍威尔卸任 {days_to_powell} 天 (宽松交易情绪高峰窗口)")
-    elif days_to_powell is not None and 0 < days_to_powell < 180:
-        macro_events.append(f"距鲍威尔卸任 {days_to_powell} 天 (宽松交易酝酿)")
-
-    # 周期定位
-    if days_to_powell is not None and 0 < days_to_powell < 90:
-        position = "1H26 宽松交易窗口后段 (接近情绪高峰)"
-    elif days_to_powell is not None and 0 < days_to_powell < 180:
-        position = "1H26 宽松交易窗口中段 (宜持有进攻)"
-    else:
-        position = "2H26 关注 (AI 资本开支是否下修, 警惕见顶)"
-
-    return CalendarBlock(
-        ticker=snap.ticker,
-        current_quarter=current_quarter,
-        days_to_earnings=None,  # 需要 yfinance earnings_dates
-        days_to_midterm_election=days_to_midterm,
-        days_to_powell_departure=days_to_powell,
-        calendar_effect=cal_effect,
-        macro_events=macro_events,
-        position_in_cycle=position,
-    )
+# (Step 5 删除于 2026-06-19 - 见 git log)
 
 
 # ────────────────────────────────────────
@@ -1000,7 +939,6 @@ def _std(values: list) -> float:
 def compute_blue_ocean_scores(
     snap: StockSnapshot,
     fund: FundamentalScan,
-    cal: CalendarBlock,
     tb: TopBottomBlock,
     market_sentiment_score: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -1012,6 +950,8 @@ def compute_blue_ocean_scores(
       - methods: 5 大方法适用度
       - info_gap: 信息差 4 级 (S/A/B/C)
       - overall: 综合判断
+
+    注: Phase 移除 Step 5 (cal 参数), 政策维度改用固定 P=5
     """
     # ────────────────────────────────────────
     # 1. MPEVL 5 维评分
@@ -1047,21 +987,12 @@ def compute_blue_ocean_scores(
         "signals": m_signals,
     }
 
-    # P 政策 (用日历位置推断)
-    days_to_election = cal.days_to_midterm_election or 999
-    days_to_powell = cal.days_to_powell_departure or 999
-    if days_to_election < 90:
-        p_score = 7
-        p_detail = f"距中期选举 {days_to_election} 天, 政策窗口临近, 主题机会"
-    elif days_to_powell < 180:
-        p_score = 6
-        p_detail = f"距鲍威尔卸任 {days_to_powell} 天, 联储换届预期发酵"
-    else:
-        p_score = 5
-        p_detail = "无重大政策窗口, 中性"
+    # P 政策 (Phase 移除日历, 改用固定中性)
+    p_score = 5
+    p_detail = "无重大政策窗口, 中性 (Phase 移除日历事件)"
     mpevl["P"] = {
         "code": "P", "name": "政策", "score": p_score, "detail": p_detail,
-        "signals": [f"距中期选举: {days_to_election} 天", f"距鲍威尔卸任: {days_to_powell} 天"],
+        "signals": ["无日历事件追踪"],
     }
 
     # E 盈利 (用基本面 4 维里的 earnings_score)
@@ -1121,14 +1052,13 @@ def compute_blue_ocean_scores(
         "data_available": bool(snap.industry),
     })
 
-    # 2. 日历+事件叠加
-    cal_applicable = 8 if (cal.days_to_earnings or cal.days_to_midterm_election) else 3
+    # 2. 日历+事件叠加 (Phase 移除, 改用固定中性)
     methods.append({
         "code": "calendar_event",
         "name": "日历+事件叠加",
-        "applicable": cal_applicable,
-        "rationale": f"距财报: {cal.days_to_earnings or 'N/A'} 天 - 财报季叠加中期选举+鲍威尔卸任",
-        "data_available": bool(cal.days_to_earnings),
+        "applicable": 0,
+        "rationale": "❌ Phase 移除 (用户判断长期价值不大), 保留入口便于未来重启用",
+        "data_available": False,
     })
 
     # 3. 轮动规律识别

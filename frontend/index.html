@@ -167,16 +167,7 @@
       <div x-show="!report?.catalysts?.catalysts?.length" class="text-sm text-slate-400 text-center py-4">无催化数据 (LLM 未启用或返回空)</div>
     </div>
 
-    <!-- Step 5: 日历 + 事件 -->
-    <div x-show="activeStep >= 5" class="bg-white border border-slate-200 rounded-lg p-4">
-      <h3 class="text-sm font-semibold text-slate-700 mb-3">⑤ 日历 + 事件 <span class="text-xs text-slate-400 ml-2">🤖 自动</span></h3>
-      <div class="grid grid-cols-2 gap-3 text-sm">
-        <div><span class="text-slate-500">当前季度:</span> <b x-text="report?.calendar?.current_quarter"></b></div>
-        <div><span class="text-slate-500">距中期选举:</span> <b x-text="report?.calendar?.days_to_midterm_election + ' 天'"></b></div>
-        <div><span class="text-slate-500">距鲍威尔卸任:</span> <b x-text="report?.calendar?.days_to_powell_departure + ' 天'"></b></div>
-        <div><span class="text-slate-500">日历效应:</span> <b x-text="report?.calendar?.calendar_effect"></b></div>
-        <div class="col-span-2 text-xs text-slate-600" x-text="report?.calendar?.position_in_cycle"></div>
-      </div>
+    <!-- Step 5 (日历) 已移除 - 见 OPTIMIZATION_PLAN.md -->
     </div>
 
     <!-- Step 6: 轮动定位 (Phase C: 自动量化 + 手动覆盖) -->

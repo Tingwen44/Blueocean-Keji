@@ -13,7 +13,7 @@ def generate_html(report: OnePagerReport) -> str:
     """生成 1 页纸的 HTML (浏览器友好,可右键打印)"""
     fund = report.fundamental
     chain = report.chain
-    cal = report.calendar
+    cal = None  # Phase 移除 (2026-06-19)
     rot = report.rotation
     tb = report.top_bottom
     risk = report.risk
@@ -155,13 +155,8 @@ def generate_html(report: OnePagerReport) -> str:
   </div>
 
   <div class="section">
-    <h3>⑤ 日历 + 事件</h3>
-    <div class="metric"><span class="label">当前季度</span><span>{cal.current_quarter}</span></div>
-    <div class="metric"><span class="label">距中期选举</span><span>{cal.days_to_midterm_election or '?'} 天</span></div>
-    <div class="metric"><span class="label">距鲍威尔卸任</span><span>{cal.days_to_powell_departure or '?'} 天</span></div>
-    <div class="metric"><span class="label">日历效应</span><span>{cal.calendar_effect}</span></div>
-    <div style="margin-top:6px;font-size:12px;color:#6b7280">周期定位: {cal.position_in_cycle}</div>
-  </div>
+      <!-- Step 5 (日历) 已移除 - 见 OPTIMIZATION_PLAN.md -->
+    </div>
 
   <div class="section">
     <h3>⑥ 轮动定位</h3>

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment, fetch_history_prices
 from scoring import (
-    scan_fundamental, scan_calendar, scan_top_bottom_signals,
+    scan_fundamental, scan_top_bottom_signals,
     compute_composite_score, derive_signal, compute_blue_ocean_scores,
     compute_rotation_metrics, compute_risk_scores,
 )
@@ -28,7 +28,7 @@ from database import init_db, save_analysis, list_analyses, get_analysis, get_la
 from pdf_export import generate_html, generate_pdf
 from schemas import (
     StockSnapshot, FundamentalScan, ChainPositioning, CatalystsBlock,
-    CalendarBlock, RotationBlock, RiskBlock, OnePagerReport,
+    RotationBlock, RiskBlock, OnePagerReport,
     PortfolioCreate, PortfolioUpdate, PositionCreate, PositionUpdate,
 )
 
@@ -187,10 +187,8 @@ async def step4_catalysts(ticker: str, use_llm: bool = True):
 
 @app.get("/api/step5/{ticker}")
 async def step5_calendar(ticker: str):
-    """Step 5: 日历+事件"""
-    snap = fetch_stock_snapshot(ticker)
-    cal = scan_calendar(snap)
-    return cal.model_dump()
+    """Step 5: 日历+事件 (Phase 移除于 2026-06-19)"""
+    raise HTTPException(410, "Step 5 已移除 (日历事件对长期分析价值不大)")
 
 
 # Step 6 (轮动), 7 (见顶信号), 8 (风险) - 见 /api/one-pager/{ticker} 一体化输出
@@ -294,11 +292,8 @@ async def generate_one_pager(
             llm_status["step4"] = "failed"
             llm_status["errors"].append(f"step4: {type(e).__name__}: {str(e)[:200]}")
             cats = CatalystsBlock(ticker=ticker, catalysts=[], total_score=5)
-        # Step 5
-        try:
-            cal = scan_calendar(snap)
-        except Exception as e:
-            raise HTTPException(500, f"Step 5 (日历) 失败: {type(e).__name__}: {e}")
+        # Step 5 (Phase 移除于 2026-06-19, 见 OPTIMIZATION_PLAN.md)
+        cal = None  # 占位保持兼容性
         # Step 6 (用户填, Phase C 加自动量化)
         # 拉历史价 (SPY + 板块 ETF + ticker) 用于轮动指标
         try:
@@ -425,7 +420,7 @@ async def generate_one_pager(
         # Phase B: 蓝海框架 (MPEVL + 5 大方法 + 信息差 4 级)
         market_sent_score = tb.sentiment_score  # CNN 真实分数
         blue_ocean = compute_blue_ocean_scores(
-            snap=snap, fund=fund, cal=cal, tb=tb,
+            snap=snap, fund=fund, tb=tb,
             market_sentiment_score=market_sent_score,
         )
 
@@ -445,7 +440,6 @@ async def generate_one_pager(
             fundamental=fund,
             chain=chain,
             catalysts=cats,
-            calendar=cal,
             rotation=rot,
             top_bottom=tb,
             risk=risk,

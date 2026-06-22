@@ -113,15 +113,9 @@ class CatalystsBlock(BaseModel):
 # ────────────────────────────────────────
 # Step 5: 日历+事件
 # ────────────────────────────────────────
-class CalendarBlock(BaseModel):
-    ticker: str
-    current_quarter: str
-    days_to_earnings: Optional[int] = None
-    days_to_midterm_election: Optional[int] = None
-    days_to_powell_departure: Optional[int] = None
-    calendar_effect: str
-    macro_events: List[str]
-    position_in_cycle: str
+# CalendarBlock (Phase 移除于 2026-06-19, 用户判断长期价值不大)
+# ────────────────────────────────────────
+# (Step 5 删除 - 见 git log)
 
 
 # ────────────────────────────────────────
@@ -198,7 +192,6 @@ class OnePagerReport(BaseModel):
     fundamental: FundamentalScan
     chain: ChainPositioning
     catalysts: CatalystsBlock
-    calendar: CalendarBlock
     rotation: RotationBlock
     top_bottom: TopBottomBlock
     risk: RiskBlock
@@ -206,7 +199,6 @@ class OnePagerReport(BaseModel):
     data_gaps: List[str] = []
     # Phase B: 蓝海框架 (MPEVL 5 维 + 5 大方法 + 信息差 4 级)
     blue_ocean: Optional[dict] = None  # 用 dict 是因为嵌套复杂, 见 compute_blue_ocean_scores
-
 
 # ────────────────────────────────────────
 # Phase B: 蓝海框架模型
@@ -222,7 +214,7 @@ class MPEVLDimension(BaseModel):
 
 class BlueOceanMethod(BaseModel):
     """5 大方法适用度"""
-    code: Literal["chain_bottleneck", "calendar_event", "rotation", "expert_interview", "top_bottom"]
+    code: Literal["chain_bottleneck", "rotation", "expert_interview", "top_bottom"]
     name: str
     applicable: int = Field(..., ge=0, le=10)
     rationale: str
