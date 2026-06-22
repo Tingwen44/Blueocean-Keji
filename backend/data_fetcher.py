@@ -408,15 +408,15 @@ def fetch_macro_indicators() -> Dict[str, Any]:
 def fetch_history_prices(symbol: str, days: int = 200) -> Optional[Dict[str, Any]]:
     """拉历史日线价 (Phase C: 板块轮动 / 个股相对表现)
 
-    优先 Finnhub (cloud 友好), yfinance fallback (本地友好)
+    优先 Finnhub (cloud 友好, 但只支持股票不支持 ETF), yfinance fallback
     返回: {c: [close...], h, l, o, t: [timestamp...], v: [volume...], s: 'ok'}
 
-    注意: 不缓存 (拉一次几十 KB, 不重)
+    注意: yfinance 在 cloud 上会 hangs, 用 ThreadPoolExecutor 加 6s 超时
     """
     _setup_proxy()
     import time as _t
 
-    # 1) Finnhub 优先 (60 calls/min 免费额度)
+    # 1) Finnhub 优先 (60 calls/min 免费额度, 但不支持 ETF ticker)
     api_key = os.environ.get('FINNHUB_API_KEY')
     if api_key:
         try:
@@ -429,29 +429,39 @@ def fetch_history_prices(symbol: str, days: int = 200) -> Optional[Dict[str, Any
                 data = r.json()
                 if data.get('s') == 'ok' and data.get('c'):
                     return data
-                # s = "no_data" 表示没有
+                # s = "no_data" 表示没有 (常见: ETF 不支持)
         except Exception as e:
             print(f"[history] Finnhub {symbol} 失败: {e}")
 
-    # 2) yfinance fallback
-    try:
-        import yfinance as yf
-        t = yf.Ticker(symbol)
-        h = t.history(period=f"{days}d")
-        if h is not None and len(h) > 0:
-            import pandas as pd
-            return {
-                "c": h['Close'].tolist(),
-                "h": h['High'].tolist(),
-                "l": h['Low'].tolist(),
-                "o": h['Open'].tolist(),
-                "v": h['Volume'].tolist(),
-                "t": [int(d.timestamp()) for d in h.index],
-                "s": "ok",
-            }
-    except Exception as e:
-        print(f"[history] yfinance {symbol} 失败: {e}")
+    # 2) yfinance fallback (带超时, 避免 datacenter IP hangs)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_yfinance_history_sync, symbol, days)
+        try:
+            return fut.result(timeout=6.0)
+        except concurrent.futures.TimeoutError:
+            print(f"[history] yfinance {symbol} 超时 (6s), 跳过")
+            return None
+        except Exception as e:
+            print(f"[history] yfinance {symbol} 异常: {type(e).__name__}: {e}")
+            return None
 
+
+def _yfinance_history_sync(symbol: str, days: int):
+    """yfinance 同步拉历史 (内部函数, 用 ThreadPoolExecutor 包装超时)"""
+    import yfinance as yf
+    t = yf.Ticker(symbol)
+    h = t.history(period=f"{days}d")
+    if h is not None and len(h) > 0:
+        return {
+            "c": h['Close'].tolist(),
+            "h": h['High'].tolist(),
+            "l": h['Low'].tolist(),
+            "o": h['Open'].tolist(),
+            "v": h['Volume'].tolist(),
+            "t": [int(d.timestamp()) for d in h.index],
+            "s": "ok",
+        }
     return None
 
 
