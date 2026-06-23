@@ -159,7 +159,7 @@ def generate_html(report: OnePagerReport) -> str:
     </div>
 
   <div class="section">
-    <h3>⑥ 轮动定位</h3>
+    <h3>⑤ 轮动定位</h3>
     <div class="metric"><span class="label">轮动位置</span><span>{rot.rotation_position}</span></div>
     <div class="metric"><span class="label">轮动链</span><span>{rot.rotation_chain}</span></div>
     <div class="metric"><span class="label">资金流</span><span>{rot.capital_flow}</span></div>
@@ -167,7 +167,7 @@ def generate_html(report: OnePagerReport) -> str:
   </div>
 
   <div class="section">
-    <h3>⑦ 见顶/见底信号 ({tb.triggered_count}/{tb.total_count} 触发)</h3>
+    <h3>⑥ 见顶/见底信号 ({tb.triggered_count}/{tb.total_count} 触发)</h3>
     <table>
       <tr><th>指标</th><th>状态</th><th>值</th><th>说明</th></tr>
       {signals_html or '<tr><td colspan="4" style="text-align:center;color:#9ca3af">无信号</td></tr>'}
@@ -176,7 +176,7 @@ def generate_html(report: OnePagerReport) -> str:
   </div>
 
   <div class="section">
-    <h3>⑧ 风险定价</h3>
+    <h3>⑦ 风险定价</h3>
     {risks_html or '<div style="color:#9ca3af;text-align:center">未填写</div>'}
     <div style="margin-top:8px;font-size:13px">止损线: <b>${risk.stop_loss_price or '未设'} ({(risk.stop_loss_pct or 0):.1f}%)</b></div>
   </div>

@@ -71,16 +71,15 @@ function appData() {
       stop_loss_pct: null,
     },
 
-    // 8 步流程
+    // 7 步流程 (Phase 移除日历 2026-06-19)
     steps: [
       { id: 1, label: '数据快照', status: '✓' },
       { id: 2, label: '4 维基本面', status: '🤖' },
       { id: 3, label: '产业链定位', status: '🤖' },
       { id: 4, label: '催化时点', status: '🤖' },
-      { id: 5, label: '日历+事件', status: '🤖' },
-      { id: 6, label: '轮动定位', status: '✍' },
-      { id: 7, label: '见顶信号', status: '🤖' },
-      { id: 8, label: '风险定价', status: '✍' },
+      { id: 5, label: '轮动定位', status: '✍' },
+      { id: 6, label: '见顶信号', status: '🤖' },
+      { id: 7, label: '风险定价', status: '✍' },
     ],
 
     async init() {
@@ -193,7 +192,7 @@ function appData() {
         if (!r.ok) throw new Error(await r.text());
         const data = await r.json();
         this.report = data.report;
-        this.activeStep = 8;  // 跳到最后,看到完整 1 页纸
+        this.activeStep = 7;  // 跳到最后,看到完整 1 页纸
         await this.loadHistory();
       } catch (e) {
         alert('分析失败: ' + e.message);
@@ -253,7 +252,7 @@ function appData() {
         this.ticker = data.ticker;
         this.report = data.report;
         this.showHistory = false;
-        this.activeStep = 8;
+        this.activeStep = 7;
       } catch (e) { console.error(e); }
     },
 

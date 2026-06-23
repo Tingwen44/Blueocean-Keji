@@ -843,9 +843,7 @@ def compute_risk_scores(
         sub_scores["macro"]["score"] = min(10, macro_score)
         sub_scores["macro"]["available"] = True
     else:
-        sub_scores["macro"]["details"].append("FRED 未配置, 用 sentiment 反向 (Phase A 已用 CNN)")
-        # 用 CNN sentiment 反向 (越恐惧 = 宏观给机会, 越贪婪 = 风险)
-        # 这里由 caller 传 market_sentiment_score, 简单放 5 = 中性
+        sub_scores["macro"]["details"].append("FRED 未配置, 宏观中性 (Phase 移除 CNN 情绪 2026-06-19)")
         sub_scores["macro"]["score"] = 5
         sub_scores["macro"]["available"] = False
 
@@ -1083,9 +1081,8 @@ def compute_blue_ocean_scores(
     snap: StockSnapshot,
     fund: FundamentalScan,
     tb: TopBottomBlock,
-    market_sentiment_score: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """蓝海框架综合分析
+    """蓝海框架综合分析 (Phase B)
 
     来源: mainland-subjective-analysis skill v1.0
     输出:
