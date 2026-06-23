@@ -597,46 +597,12 @@ def compute_historical_pe_range(symbol: str, current_eps: Optional[float]) -> Di
 
 
 def fetch_market_sentiment(force: bool = False) -> Dict[str, Any]:
-    """拉取 CNN Fear & Greed Index (0-100)
-    - 免费 API, 不用 key
-    - 10 分钟内存缓存
-    - 失败时返回 score=None (前端用规则推断降级)
-    - 免费 API, 不用 key
-    - 10 分钟内存缓存
-    - 失败时返回 score=None (前端用规则推断降级)
-    """
-    if not force and _SENTIMENT_CACHE["data"] and (_time.time() - _SENTIMENT_CACHE["ts"]) < _SENTIMENT_TTL:
-        return _SENTIMENT_CACHE["data"]
+    """Phase 移除于 2026-06-19 (用户判断市场情绪对个股无参考价值)
 
-    _setup_proxy()
-    url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.cnn.com/",
-    }
-    try:
-        with httpx.Client(timeout=10.0) as c:
-            r = c.get(url, headers=headers)
-        if r.status_code != 200:
-            print(f"[sentiment] CNN API HTTP {r.status_code}: {r.text[:200]}")
-            return {"score": None, "source": "fallback", "error": f"HTTP {r.status_code}"}
-        data = r.json()
-        fg = data.get("fear_and_greed", {})
-        result = {
-            "score": int(fg.get("score")) if fg.get("score") is not None else None,
-            "label": fg.get("rating"),
-            "previous_close": int(fg.get("previous_close")) if fg.get("previous_close") is not None else None,
-            "previous_1_week": int(fg.get("previous_1_week")) if fg.get("previous_1_week") is not None else None,
-            "source": "cnn_api",
-            "fetched_at": _time.time(),
-        }
-        _SENTIMENT_CACHE["data"] = result
-        _SENTIMENT_CACHE["ts"] = _time.time()
-        return result
-    except Exception as e:
-        print(f"[sentiment] CNN API 拉取失败: {type(e).__name__}: {e}")
-        return {"score": None, "source": "fallback", "error": str(e)}
+    历史实现: 拉 CNN Fear & Greed Index, 10min 缓存
+    现在直接返 None, 调用方需自己处理
+    """
+    return {"score": None, "source": "removed", "error": "Phase removed"}
 
 
 def _safe_fred(fred, series_id):

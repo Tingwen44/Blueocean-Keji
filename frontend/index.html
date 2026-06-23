@@ -303,42 +303,8 @@
     <div x-show="activeStep >= 7" class="bg-white border border-slate-200 rounded-lg p-4">
       <h3 class="text-sm font-semibold text-slate-700 mb-3">
         ⑦ 见顶/见底信号
-        <span class="text-xs text-slate-400 ml-2">🤖 自动 (含真实贪婪指数)</span>
+        <span class="text-xs text-slate-400 ml-2">🤖 自动 (Phase 移除市场情绪 2026-06-19)</span>
       </h3>
-
-      <!-- 情绪条 (Phase A: 真实 CNN Fear & Greed Index) -->
-      <div class="mb-4 p-3 bg-slate-50 border border-slate-200 rounded">
-        <div class="flex justify-between items-center mb-1.5">
-          <div class="text-xs font-semibold text-slate-600">📊 市场情绪 (CNN Fear & Greed Index)</div>
-          <div class="text-xs text-slate-500">
-            <span x-show="report?.top_bottom?.sentiment_source === 'cnn_api'" class="text-green-600">● 实时</span>
-            <span x-show="report?.top_bottom?.sentiment_source === 'rule'" class="text-orange-500">● 规则推断</span>
-            <span x-show="report?.top_bottom?.sentiment_source === 'fallback'" class="text-red-500">● 降级</span>
-          </div>
-        </div>
-        <div class="flex items-center gap-3">
-          <div class="text-3xl font-bold" :class="sentimentScoreColor" x-text="report?.top_bottom?.sentiment_score ?? '—'"></div>
-          <div class="flex-1">
-            <div class="text-sm font-semibold" :class="sentimentScoreColor" x-text="report?.top_bottom?.sentiment_label || report?.top_bottom?.sentiment || 'N/A'"></div>
-            <div class="text-xs text-slate-500" x-show="report?.top_bottom?.sentiment_prev_close !== null">
-              昨收: <span x-text="report?.top_bottom?.sentiment_prev_close ?? '—'"></span>
-              · 上周: <span x-text="report?.top_bottom?.sentiment_prev_week ?? '—'"></span>
-            </div>
-          </div>
-        </div>
-        <!-- 色带 -->
-        <div class="mt-2 h-2 rounded-full overflow-hidden flex">
-          <div class="flex-1 bg-red-500" title="Extreme Fear 0-25"></div>
-          <div class="flex-1 bg-orange-400" title="Fear 25-45"></div>
-          <div class="flex-1 bg-yellow-300" title="Neutral 45-55"></div>
-          <div class="flex-1 bg-green-300" title="Greed 55-75"></div>
-          <div class="flex-1 bg-green-600" title="Extreme Greed 75-100"></div>
-        </div>
-        <div class="relative h-3 mt-0.5" x-show="report?.top_bottom?.sentiment_score !== null">
-          <div class="absolute w-0.5 h-3 bg-slate-800 -ml-px"
-               :style="`left: ${(report?.top_bottom?.sentiment_score || 0)}%`"></div>
-        </div>
-      </div>
 
       <!-- 见顶警告 (top signals) -->
       <div class="mb-3" x-show="(report?.top_bottom?.signals || []).filter(s => s.signal_type === 'top').length > 0">

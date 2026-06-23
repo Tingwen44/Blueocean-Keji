@@ -329,24 +329,12 @@ def scan_top_bottom_signals(snap: StockSnapshot) -> TopBottomBlock:
     top_count = sum(1 for s in signals if s.signal_type == "top" and s.triggered)
     bottom_count = sum(1 for s in signals if s.signal_type == "bottom" and s.triggered)
 
-    # 情绪判断 (会由 app.py 用真实 CNN 数据覆盖)
-    if triggered_count >= total_count * 0.7:
-        sentiment = "extreme_greed"
-    elif triggered_count >= total_count * 0.5:
-        sentiment = "greed"
-    elif triggered_count >= total_count * 0.3:
-        sentiment = "neutral"
-    elif triggered_count > 0:
-        sentiment = "fear"
-    else:
-        sentiment = "extreme_fear"
-
+    # sentiment 字段已移除 (2026-06-19), 综合分改用见顶/见底信号比例
     return TopBottomBlock(
         ticker=snap.ticker,
         signals=signals,
         triggered_count=triggered_count,
         total_count=total_count,
-        sentiment=sentiment,
     )
 
 
@@ -357,18 +345,23 @@ def compute_composite_score(
     fund: FundamentalScan,
     top_bottom: TopBottomBlock,
 ) -> float:
-    """综合分 = 基本面 60% + 反向情绪 40%"""
-    # 情绪分数 (反向, 越恐惧 = 越好)
-    sentiment_to_score = {
-        "extreme_fear": 9,
-        "fear": 7,
-        "neutral": 5,
-        "greed": 3,
-        "extreme_greed": 1,
-    }
-    sent_score = sentiment_to_score[top_bottom.sentiment]
+    """综合分 = 基本面 80% + 见顶/见底信号 20%
 
-    composite = fund.fund_score * 0.6 + sent_score * 0.4
+    注: Phase 移除 CNN 情绪 (2026-06-19), 改用见顶/见底信号比例
+    - 见顶触发多 → 减分 (风险信号)
+    - 见底触发多 → 加分 (机会信号)
+    """
+    # 见顶/见底信号比例 → 0-10 分数
+    if top_bottom.total_count > 0:
+        top_ratio = sum(1 for s in top_bottom.signals if s.signal_type == "top" and s.triggered) / top_bottom.total_count
+        bottom_ratio = sum(1 for s in top_bottom.signals if s.signal_type == "bottom" and s.triggered) / top_bottom.total_count
+        # 见底加分, 见顶减分, 基础 5
+        signal_score = 5 + (bottom_ratio - top_ratio) * 10  # 范围约 0-10
+        signal_score = max(0, min(10, signal_score))
+    else:
+        signal_score = 5
+
+    composite = fund.fund_score * 0.8 + signal_score * 0.2
     return round(composite, 2)
 
 
@@ -1108,29 +1101,11 @@ def compute_blue_ocean_scores(
     # ────────────────────────────────────────
     mpevl = {}
 
-    # M 宏观 (依赖 FRED, 这里用市场情绪近似)
-    if market_sentiment_score is not None:
-        # 反向: 越恐惧 = 宏观给机会 (低基数效应)
-        if market_sentiment_score < 25:
-            m_score = 8
-            m_detail = f"市场情绪极端恐惧 (F&G {market_sentiment_score}), 宏观给机会"
-        elif market_sentiment_score < 45:
-            m_score = 6
-            m_detail = f"市场情绪恐惧 (F&G {market_sentiment_score}), 宏观偏正面"
-        elif market_sentiment_score < 55:
-            m_score = 5
-            m_detail = f"市场情绪中性 (F&G {market_sentiment_score}), 宏观中性"
-        elif market_sentiment_score < 75:
-            m_score = 4
-            m_detail = f"市场情绪贪婪 (F&G {market_sentiment_score}), 宏观偏负面"
-        else:
-            m_score = 2
-            m_detail = f"市场情绪极端贪婪 (F&G {market_sentiment_score}), 宏观过热"
-        m_signals = [f"CNN Fear & Greed: {market_sentiment_score}"]
-    else:
-        m_score = 5
-        m_detail = "无情绪数据, 中性"
-        m_signals = []
+    # M 宏观 (Phase 移除 CNN sentiment 2026-06-19, 改用 FRED 数据由 caller 传)
+    # 当前实现: caller 已传 FRED 数据 (macro_indicators), 后续可扩展
+    m_score = 5
+    m_detail = "无 FRED 数据, 中性 (Phase 移除 CNN 情绪)"
+    m_signals = []
 
     mpevl["M"] = {
         "code": "M", "name": "宏观", "score": m_score, "detail": m_detail,

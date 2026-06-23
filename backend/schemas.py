@@ -150,13 +150,7 @@ class TopBottomBlock(BaseModel):
     signals: List[TopBottomSignal]
     triggered_count: int
     total_count: int
-    sentiment: Literal["extreme_greed", "greed", "neutral", "fear", "extreme_fear"]
-    # Phase A 新增: 真实贪婪指数 (从 CNN Fear & Greed API 拉)
-    sentiment_score: Optional[int] = None  # 0-100
-    sentiment_label: Optional[str] = None  # CNN 原始标签 "Extreme Greed" / "Greed" / "Neutral" / "Fear" / "Extreme Fear"
-    sentiment_source: Optional[str] = None  # "cnn_api" | "rule" | "fallback"
-    sentiment_prev_close: Optional[int] = None  # 上一交易日分数
-    sentiment_prev_week: Optional[int] = None  # 上周同期分数
+    # sentiment 字段已移除 (Phase 移除于 2026-06-19, 用户判断对个股无参考价值)
 
 
 # ────────────────────────────────────────

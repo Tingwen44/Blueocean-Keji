@@ -290,16 +290,7 @@ function appData() {
       ];
     },
 
-    // Phase A: 情绪分数对应的 Tailwind 颜色
-    get sentimentScoreColor() {
-      const s = this.report?.top_bottom?.sentiment_score;
-      if (s === null || s === undefined) return 'text-slate-400';
-      if (s >= 75) return 'text-green-700';      // extreme greed
-      if (s >= 55) return 'text-green-600';      // greed
-      if (s >= 45) return 'text-yellow-600';     // neutral
-      if (s >= 25) return 'text-orange-500';     // fear
-      return 'text-red-600';                     // extreme fear
-    },
+    // sentiment helper (Phase 移除于 2026-06-19)
 
     // Phase B: 蓝海框架 helpers
     get blueOceanSignalLabel() {

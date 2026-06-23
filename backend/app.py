@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_market_sentiment, fetch_history_prices
+from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_history_prices
 from scoring import (
     scan_fundamental, scan_top_bottom_signals,
     compute_composite_score, derive_signal, compute_blue_ocean_scores,
@@ -90,17 +90,6 @@ async def get_snapshot(ticker: str):
 async def get_macro():
     """拉取宏观指标 (Step 5 辅助)"""
     return fetch_macro_indicators()
-
-
-@app.get("/api/market/sentiment")
-async def api_market_sentiment(force: bool = False):
-    """拉取 CNN Fear & Greed Index (市场情绪, 0-100)
-
-    - 免费 API, 无 key
-    - 10 分钟内存缓存
-    - Phase A: 给顶栏"情绪"用实时数值
-    """
-    return fetch_market_sentiment(force=force)
 
 
 # ────────────────────────────────────────
@@ -351,25 +340,7 @@ async def generate_one_pager(
         )
         # Step 7
         tb = scan_top_bottom_signals(snap)
-        # 覆盖 sentiment: 拉 CNN 真实贪婪指数 (失败则用规则化推断)
-        try:
-            market_sent = fetch_market_sentiment()
-            if market_sent.get("score") is not None:
-                tb.sentiment_score = market_sent["score"]
-                tb.sentiment_label = market_sent.get("label")
-                tb.sentiment_source = market_sent.get("source", "cnn_api")
-                tb.sentiment_prev_close = market_sent.get("previous_close")
-                tb.sentiment_prev_week = market_sent.get("previous_1_week")
-                # 用真实分数映射到 5 档 sentiment
-                s = market_sent["score"]
-                if s >= 75: tb.sentiment = "extreme_greed"
-                elif s >= 55: tb.sentiment = "greed"
-                elif s >= 45: tb.sentiment = "neutral"
-                elif s >= 25: tb.sentiment = "fear"
-                else: tb.sentiment = "extreme_fear"
-        except Exception as e:
-            print(f"[app] 拉取市场情绪失败, 用规则推断: {e}")
-            tb.sentiment_source = "rule"
+        # (Phase 移除 CNN sentiment 2026-06-19, 不再覆盖 tb.sentiment_*)
 
         # Phase D: 风险定价自动评分 (4 类: macro/sector/competitor/company)
         try:
@@ -427,14 +398,13 @@ async def generate_one_pager(
         confidence = int(min(100, max(0, composite * 10)))
 
         # Phase B: 蓝海框架 (MPEVL + 5 大方法 + 信息差 4 级)
-        market_sent_score = tb.sentiment_score  # CNN 真实分数
+        # (Phase 移除 CNN sentiment 2026-06-19, market_sentiment_score 不再传)
         blue_ocean = compute_blue_ocean_scores(
             snap=snap, fund=fund, tb=tb,
-            market_sentiment_score=market_sent_score,
         )
 
         # 1 句结论
-        one_liner = f"{fund.earnings_signal.upper()} 盈利, {fund.growth_signal.upper()} 增长, {fund.valuation_signal.upper()} 估值; 情绪 {tb.sentiment}; 综合分 {composite}/10 → {signal}"
+        one_liner = f"{fund.earnings_signal.upper()} 盈利, {fund.growth_signal.upper()} 增长, {fund.valuation_signal.upper()} 估值; 见顶 {tb.triggered_count}/{tb.total_count} 触发; 综合分 {composite}/10 → {signal}"
 
         report = OnePagerReport(
             ticker=snap.ticker,

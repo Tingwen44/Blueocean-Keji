@@ -172,7 +172,7 @@ def generate_html(report: OnePagerReport) -> str:
       <tr><th>指标</th><th>状态</th><th>值</th><th>说明</th></tr>
       {signals_html or '<tr><td colspan="4" style="text-align:center;color:#9ca3af">无信号</td></tr>'}
     </table>
-    <div style="margin-top:6px;font-size:12px">情绪: <b>{tb.sentiment}</b></div>
+    <div style="margin-top:6px;font-size:12px">见顶/见底触发: <b>{tb.triggered_count}/{tb.total_count}</b></div>
   </div>
 
   <div class="section">
