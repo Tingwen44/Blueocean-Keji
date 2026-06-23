@@ -127,6 +127,78 @@
         </tbody>
       </table>
       <div class="mt-2 text-sm">基本面综合分: <b x-text="report?.fundamental?.fund_score + '/10'"></b></div>
+
+      <!-- Phase E.1: 估值精细化 -->
+      <div class="mt-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded" x-show="report?.fundamental?.valuation_detail_extended">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-sm font-semibold text-blue-900">🔍 估值精细化 (Phase E.1)</h4>
+          <span class="text-xs text-blue-700" x-text="report?.fundamental?.valuation_detail_extended?.valuation_context || ''"></span>
+        </div>
+
+        <!-- 推荐指标 -->
+        <div class="mb-2 p-2 bg-white rounded border border-blue-100" x-show="report?.fundamental?.valuation_detail_extended?.recommended_metric">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-500">📐 推荐估值指标:</span>
+            <div class="text-right">
+              <span class="font-bold text-blue-700" x-text="report?.fundamental?.valuation_detail_extended?.recommended_metric?.label || '—'"></span>
+              <div class="text-xs text-slate-500" x-text="report?.fundamental?.valuation_detail_extended?.recommended_metric?.when || ''"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 行业中位 PE -->
+        <div class="mb-2 p-2 bg-white rounded border border-blue-100" x-show="report?.fundamental?.valuation_detail_extended?.industry_pe_median">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-500">📊 行业中位 PE:</span>
+            <div class="text-right">
+              <span class="font-mono font-bold" x-text="report?.fundamental?.valuation_detail_extended?.industry_pe_median + 'x'"></span>
+              <div class="text-xs text-slate-500" x-text="'基于 ' + (report?.fundamental?.valuation_detail_extended?.industry_peer_count || 0) + ' 个同业'"></div>
+            </div>
+          </div>
+          <div class="mt-1 text-xs flex items-center gap-2" x-show="report?.fundamental?.valuation_detail_extended?.pe_vs_industry_pct !== null">
+            <span class="text-slate-500">vs 自己:</span>
+            <span :class="report?.fundamental?.valuation_detail_extended?.pe_vs_industry_pct < 0 ? 'text-green-600 font-bold' : 'text-red-600 font-bold'" x-text="(report?.fundamental?.valuation_detail_extended?.pe_vs_industry_pct > 0 ? '+' : '') + report?.fundamental?.valuation_detail_extended?.pe_vs_industry_pct + '%'"></span>
+            <span class="text-slate-400" x-text="report?.fundamental?.valuation_detail_extended?.pe_vs_industry_pct < 0 ? '折价' : '溢价'"></span>
+          </div>
+        </div>
+
+        <!-- 最大对手 -->
+        <div class="mb-2 p-2 bg-white rounded border border-blue-100" x-show="report?.fundamental?.valuation_detail_extended?.top_competitor">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-500">🏆 最大对手:</span>
+            <div class="text-right">
+              <span class="font-mono font-bold" x-text="report?.fundamental?.valuation_detail_extended?.top_competitor?.ticker"></span>
+              <span class="text-xs text-slate-500" x-text="' (' + report?.fundamental?.valuation_detail_extended?.top_competitor?.name?.slice(0, 20) + ')'"></span>
+              <div class="text-xs">
+                PE <span class="font-mono" x-text="report?.fundamental?.valuation_detail_extended?.top_competitor?.pe + 'x'"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 历史 PE 区间 -->
+        <div class="p-2 bg-white rounded border border-blue-100" x-show="report?.fundamental?.valuation_detail_extended?.historical_pe_range?.available">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs text-slate-500">📈 历史 5y PE 区间:</span>
+            <div class="text-right text-xs">
+              <span class="font-mono" x-text="report?.fundamental?.valuation_detail_extended?.historical_pe_range?.min + 'x - ' + report?.fundamental?.valuation_detail_extended?.historical_pe_range?.max + 'x'"></span>
+            </div>
+          </div>
+          <div class="relative h-3 bg-slate-200 rounded-full overflow-hidden">
+            <div class="absolute top-0 bottom-0 w-0.5 bg-slate-600" :style="`left: ${report?.fundamental?.valuation_detail_extended?.historical_pe_range?.current_percentile}%`"></div>
+            <div class="h-full bg-gradient-to-r from-green-400 via-yellow-300 to-red-400 opacity-50"></div>
+          </div>
+          <div class="flex justify-between text-xs mt-1">
+            <span class="text-slate-500">底部 0%</span>
+            <span :class="report?.fundamental?.valuation_detail_extended?.historical_pe_range?.current_percentile < 25 ? 'text-green-600 font-bold' : report?.fundamental?.valuation_detail_extended?.historical_pe_range?.current_percentile > 75 ? 'text-red-600 font-bold' : 'text-yellow-600 font-bold'" x-text="'当前 ' + report?.fundamental?.valuation_detail_extended?.historical_pe_range?.current_percentile + '% (' + report?.fundamental?.valuation_detail_extended?.historical_pe_range?.current + 'x)'"></span>
+            <span class="text-slate-500">顶部 100%</span>
+          </div>
+        </div>
+
+        <div class="text-xs text-slate-400 mt-2" x-show="!report?.fundamental?.valuation_detail_extended?.historical_pe_range?.available">
+          历史 PE 区间: <span x-text="report?.fundamental?.valuation_detail_extended?.historical_pe_range?.reason || '数据缺失'"></span>
+        </div>
+      </div>
     </div>
 
     <!-- Step 3: 产业链定位 -->

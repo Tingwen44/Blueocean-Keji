@@ -13,7 +13,10 @@ from datetime import datetime, date
 from typing import List, Optional, Dict, Any
 from schemas import (
     StockSnapshot, FundamentalScan,
-    TopBottomBlock, TopBottomSignal, OnePagerReport
+    TopBottomBlock, TopBottomSignal, OnePagerReport,
+)
+from data_fetcher import (
+    INDUSTRY_PEERS, fetch_peer_metrics, compute_historical_pe_range,
 )
 
 
@@ -109,21 +112,22 @@ def scan_fundamental(snap: StockSnapshot) -> FundamentalScan:
     fund_score = round((e_score + g_score + f_score + v_score) / 4, 2)
 
     return FundamentalScan(
-        ticker=snap.ticker,
-        earnings_signal=earnings_signal,
-        growth_signal=growth_signal,
-        financial_signal=financial_signal,
-        valuation_signal=valuation_signal,
-        earnings_detail=earnings_detail,
-        growth_detail=growth_detail,
-        financial_detail=financial_detail,
-        valuation_detail=valuation_detail,
-        earnings_score=e_score,
-        growth_score=g_score,
-        financial_score=f_score,
-        valuation_score=v_score,
-        fund_score=fund_score,
-    )
+            ticker=snap.ticker,
+            earnings_signal=earnings_signal,
+            earnings_detail=earnings_detail,
+            growth_signal=growth_signal,
+            growth_detail=growth_detail,
+            financial_signal=financial_signal,
+            financial_detail=financial_detail,
+            valuation_signal=valuation_signal,
+            valuation_detail=valuation_detail,
+            earnings_score=e_score,
+            growth_score=g_score,
+            financial_score=f_score,
+            valuation_score=v_score,
+            fund_score=fund_score,
+            valuation_detail_extended=None,
+        )
 
 
 # ────────────────────────────────────────
@@ -584,6 +588,152 @@ def compute_rotation_metrics(
 
 
 # =============================================================
+# Phase E.1: 估值精细化 (个股推荐指标 + 行业 PE + 历史 PE)
+# =============================================================
+
+CYCLICAL_SECTORS = {"Energy", "Basic Materials", "Financial Services", "Industrials"}
+GROWTH_THRESHOLD = 25.0  # 营收 YoY > 25% 视为高增长
+
+VALUATION_METRICS = {
+    "PE_TTM": {
+        "label": "PE (TTM)",
+        "description": "市盈率 (12 个月真实盈利)",
+        "when": "盈利稳定的成熟公司",
+    },
+    "PE_FWD": {
+        "label": "PE Fwd",
+        "description": "远期市盈率 (预测盈利)",
+        "when": "高增长 (营收 YoY > 25%)",
+    },
+    "EV_EBITDA": {
+        "label": "EV/EBITDA",
+        "description": "企业价值/息税摊销前利润",
+        "when": "周期行业 (能源/材料/工业/金融)",
+    },
+    "PS": {
+        "label": "P/S",
+        "description": "市销率",
+        "when": "亏损或微利公司",
+    },
+}
+
+
+def choose_valuation_metric(snap: StockSnapshot) -> str:
+    """根据行业 + 增长 + 盈利能力选最适合的估值指标
+
+    规则:
+      1. 周期行业 → EV/EBITDA
+      2. 盈利稳定 (PE TTM > 0) + 低增长 → PE TTM
+      3. 高增长 (营收 YoY > 25%) + PE Fwd > 0 → PE Fwd
+      4. 亏损或微利 → PS
+      5. 默认 → PE Fwd
+    """
+    if snap.sector in CYCLICAL_SECTORS:
+        return "EV_EBITDA"
+
+    has_pe_ttm = snap.pe_trailing is not None and snap.pe_trailing > 0
+    has_pe_fwd = snap.pe_forward is not None and snap.pe_forward > 0
+    growth = snap.revenue_growth_yoy or 0
+
+    if has_pe_ttm and growth < GROWTH_THRESHOLD:
+        return "PE_TTM"
+    if has_pe_fwd and growth >= GROWTH_THRESHOLD:
+        return "PE_FWD"
+    if not has_pe_ttm and snap.ps_trailing is not None:
+        return "PS"
+    if has_pe_fwd:
+        return "PE_FWD"
+    return "PE_FWD"
+
+
+def compute_valuation_detail(snap: StockSnapshot) -> Dict[str, Any]:
+    """估值精细化 (Phase E.1)
+
+    输出 4 个字段:
+      - recommended_metric: 最适合的估值指标
+      - industry_pe_median: 行业中位 PE
+      - top_competitor: 最大对手 PE
+      - historical_pe_range: 5y 历史 PE 区间
+
+    数据源: Finnhub (peer metrics) + Tiingo (历史价)
+    """
+    result = {
+        "recommended_metric": None,
+        "industry_pe_median": None,
+        "industry_peer_count": 0,
+        "top_competitor": None,
+        "pe_vs_industry_pct": None,
+        "historical_pe_range": None,
+        "valuation_context": "",
+    }
+
+    # 1. 推荐指标
+    metric = choose_valuation_metric(snap)
+    result["recommended_metric"] = {
+        "code": metric,
+        "label": VALUATION_METRICS[metric]["label"],
+        "description": VALUATION_METRICS[metric]["description"],
+        "when": VALUATION_METRICS[metric]["when"],
+    }
+
+    # 2-3. 行业 peers PE
+    sector = snap.sector or "Technology"
+    peers = INDUSTRY_PEERS.get(sector, INDUSTRY_PEERS.get("Technology", []))
+    peers = [p for p in peers if p != snap.ticker.upper()]
+    peer_data = []
+    for peer in peers[:8]:  # 最多 8 个
+        m = fetch_peer_metrics(peer)
+        if m and m.get("pe_normalized", 0) > 0:
+            peer_data.append(m)
+
+    if peer_data:
+        pes = sorted([p["pe_normalized"] for p in peer_data])
+        n = len(pes)
+        median = pes[n // 2] if n % 2 == 1 else (pes[n // 2 - 1] + pes[n // 2]) / 2
+        result["industry_pe_median"] = round(median, 2)
+        result["industry_peer_count"] = n
+        peer_data.sort(key=lambda x: x.get("market_cap", 0), reverse=True)
+        top = peer_data[0]
+        result["top_competitor"] = {
+            "ticker": top["ticker"],
+            "name": top["name"],
+            "pe": top["pe_normalized"],
+            "market_cap": top["market_cap"],
+        }
+
+        # 自己 PE vs 行业中位 (用 pe_trailing 即 TTM)
+        self_pe = snap.pe_trailing or snap.pe_forward
+        if self_pe and self_pe > 0 and median > 0:
+            diff_pct = round((self_pe - median) / median * 100, 1)
+            result["pe_vs_industry_pct"] = diff_pct
+
+    # 4. 历史 PE 区间 (用 current_price / pe_trailing 估算 EPS)
+    if snap.current_price and snap.pe_trailing and snap.pe_trailing > 0:
+        est_eps = snap.current_price / snap.pe_trailing
+    else:
+        est_eps = None
+    result["historical_pe_range"] = compute_historical_pe_range(
+        snap.ticker,
+        est_eps,
+    )
+
+    # 一句话解读
+    parts = []
+    metric_label = result["recommended_metric"]["label"]
+    if result["pe_vs_industry_pct"] is not None:
+        direction = "折价" if result["pe_vs_industry_pct"] < 0 else "溢价"
+        parts.append(f"{direction} {abs(result['pe_vs_industry_pct'])}% (行业中位 {result['industry_pe_median']}x)")
+    if result["top_competitor"]:
+        parts.append(f"最大对手 {result['top_competitor']['ticker']} PE {result['top_competitor']['pe']}x")
+    if result["historical_pe_range"] and result["historical_pe_range"].get("available"):
+        r = result["historical_pe_range"]
+        pos = "底部" if r["current_percentile"] < 25 else ("顶部" if r["current_percentile"] > 75 else "中段")
+        parts.append(f"历史 5y PE {r['min']}-{r['max']}x, 当前 {pos} ({r['current_percentile']} 百分位)")
+    result["valuation_context"] = f"推荐用 {metric_label}" + (f", {'; '.join(parts)}" if parts else "")
+
+    return result
+
+
 # Phase D: 风险定价自动评分 (4 类 × 25/25/30/20 权重)
 # =============================================================
 

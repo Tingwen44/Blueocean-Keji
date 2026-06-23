@@ -73,6 +73,8 @@ class FundamentalScan(BaseModel):
     growth_score: float
     financial_score: float
     valuation_score: float
+    # Phase E.1: 估值精细化
+    valuation_detail_extended: Optional[dict] = None  # 推荐指标 + 行业 PE + 历史 PE
     fund_score: float = Field(..., ge=0, le=10)
 
 

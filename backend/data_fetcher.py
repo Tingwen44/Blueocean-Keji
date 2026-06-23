@@ -504,8 +504,103 @@ _SENTIMENT_CACHE = {"data": None, "ts": 0}
 _SENTIMENT_TTL = 600  # 10 分钟缓存
 
 
+# =============================================================
+# Phase E.1: 估值精细化 (行业 peers + 历史 PE)
+# =============================================================
+
+INDUSTRY_PEERS = {
+    "Technology": ["NVDA", "AMD", "INTC", "MU", "AVGO", "TXN", "MRVL", "AMAT", "QCOM"],
+    "Communication Services": ["GOOGL", "META", "NFLX", "T", "VZ"],
+    "Consumer Cyclical": ["AMZN", "TSLA", "HD", "MCD", "NKE"],
+    "Consumer Defensive": ["PG", "KO", "PEP", "WMT", "COST"],
+    "Healthcare": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "TMO", "UNH"],
+    "Financial Services": ["JPM", "BAC", "WFC", "GS", "MS", "V", "MA"],
+    "Industrials": ["HON", "UNP", "CAT", "BA", "GE"],
+    "Energy": ["XOM", "CVX", "COP", "SLB"],
+    "Utilities": ["NEE", "DUK", "SO"],
+    "Real Estate": ["PLD", "AMT", "EQIX"],
+    "Basic Materials": ["LIN", "FCX", "NEM"],
+}
+
+
+def fetch_peer_metrics(ticker: str) -> Optional[Dict[str, Any]]:
+    """拉单个同业的 PE + marketCap (Phase E.1)
+
+    用 Finnhub /stock/profile2 (marketCap) + /stock/metric (peNormalized)
+    返回: {ticker, pe_normalized, market_cap, name}
+    """
+    api_key = os.environ.get('FINNHUB_API_KEY')
+    if not api_key:
+        return None
+    try:
+        with httpx.Client(timeout=10.0) as c:
+            base = "https://finnhub.io/api/v1"
+            r_prof = c.get(f"{base}/stock/profile2", params={"symbol": ticker, "token": api_key})
+            if r_prof.status_code != 200:
+                return None
+            prof = r_prof.json() or {}
+            mc = prof.get('marketCapitalization', 0) * 1_000_000  # Finnhub 单位是 million USD
+
+            r_met = c.get(f"{base}/stock/metric", params={"symbol": ticker, "token": api_key, "metric": "all"})
+            pe = None
+            if r_met.status_code == 200:
+                m = r_met.json() or {}
+                metric = (m or {}).get('metric', {}) or {}
+                pe = metric.get('peNormalizedAnnual') or metric.get('peBasicExtraTTM')
+                if pe is not None:
+                    try: pe = float(pe)
+                    except: pe = None
+
+            if pe is None or pe <= 0:
+                return None
+            return {
+                "ticker": ticker,
+                "name": prof.get('name', ticker),
+                "pe_normalized": round(pe, 2),
+                "market_cap": float(mc) if mc else 0,
+            }
+    except Exception as e:
+        print(f"[peer] Finnhub {ticker} 失败: {e}")
+        return None
+
+
+def compute_historical_pe_range(symbol: str, current_eps: Optional[float]) -> Dict[str, Any]:
+    """拉 5y 历史价 + 用当前 EPS 估算历史 PE 区间
+
+    注意: 这是简化版 (用 current EPS 算历史所有 PE), 精确版需要 historical EPS
+    返回: {min, max, current_percentile, points}
+    """
+    if current_eps is None or current_eps <= 0:
+        return {"available": False, "reason": "EPS <= 0, 无法算 PE"}
+    hist = fetch_history_prices(symbol, days=1825)  # 5y
+    if not hist or not hist.get('c'):
+        return {"available": False, "reason": "无历史价数据"}
+    prices = hist['c']
+    pe_values = [round(p / current_eps, 2) for p in prices if p > 0 and current_eps > 0]
+    if len(pe_values) < 60:
+        return {"available": False, "reason": f"数据点不足 ({len(pe_values)})"}
+    pe_min = min(pe_values)
+    pe_max = max(pe_values)
+    pe_now = prices[-1] / current_eps
+    sorted_pe = sorted(pe_values)
+    idx = sum(1 for p in sorted_pe if p <= pe_now)
+    percentile = round(idx / len(sorted_pe) * 100, 1)
+    return {
+        "available": True,
+        "min": round(pe_min, 2),
+        "max": round(pe_max, 2),
+        "current": round(pe_now, 2),
+        "current_percentile": percentile,
+        "points": len(pe_values),
+        "years": round(len(pe_values) / 252, 1),
+    }
+
+
 def fetch_market_sentiment(force: bool = False) -> Dict[str, Any]:
     """拉取 CNN Fear & Greed Index (0-100)
+    - 免费 API, 不用 key
+    - 10 分钟内存缓存
+    - 失败时返回 score=None (前端用规则推断降级)
     - 免费 API, 不用 key
     - 10 分钟内存缓存
     - 失败时返回 score=None (前端用规则推断降级)

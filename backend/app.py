@@ -21,7 +21,7 @@ from data_fetcher import fetch_stock_snapshot, fetch_macro_indicators, fetch_mar
 from scoring import (
     scan_fundamental, scan_top_bottom_signals,
     compute_composite_score, derive_signal, compute_blue_ocean_scores,
-    compute_rotation_metrics, compute_risk_scores,
+    compute_rotation_metrics, compute_risk_scores, compute_valuation_detail,
 )
 from llm_helper import suggest_chain_positioning, suggest_catalysts
 from database import init_db, save_analysis, list_analyses, get_analysis, get_latest_for_ticker
@@ -251,9 +251,18 @@ async def generate_one_pager(
             snap = fetch_stock_snapshot(ticker)
         except Exception as e:
             raise HTTPException(500, f"Step 1 (yfinance 拉取) 失败: {type(e).__name__}: {e}")
+        # Phase E.1: 估值精细化 (推荐指标 + 行业 PE + 历史 PE)
+        try:
+            valuation_detail = compute_valuation_detail(snap)
+        except Exception as e:
+            print(f"[Phase E.1] 估值精细化失败, 降级为空: {type(e).__name__}: {e}")
+            valuation_detail = {"recommended_metric": None, "industry_pe_median": None, "industry_peer_count": 0, "top_competitor": None, "pe_vs_industry_pct": None, "historical_pe_range": None, "valuation_context": "估值精细化失败"}
+
         # Step 2
         try:
             fund = scan_fundamental(snap)
+            # Phase E.1: 把估值精细化塞进 fund
+            fund.valuation_detail_extended = valuation_detail
         except Exception as e:
             raise HTTPException(500, f"Step 2 (基本面扫描) 失败: {type(e).__name__}: {e}")
         # Step 3 (支持 header 传 key)
