@@ -524,10 +524,15 @@ INDUSTRY_PEERS = {
 
 
 def fetch_peer_metrics(ticker: str) -> Optional[Dict[str, Any]]:
-    """拉单个同业的 PE + marketCap (Phase E.1)
+    """拉单个同业的 PE + marketCap + industry (Phase E.1.1 修复)
 
-    用 Finnhub /stock/profile2 (marketCap) + /stock/metric (peNormalized)
-    返回: {ticker, pe_normalized, market_cap, name}
+    修复:
+    - 改用 peTTM 而非 peNormalizedAnnual (后者用 Annual EPS, 亏损公司跳到 1000+)
+    - 过滤异常 PE (<5 或 >150) 视为数据缺失
+    - 返回 industry 字段 (用于按细分行业而非 GICS sector 取 peers)
+
+    用 Finnhub /stock/profile2 (marketCap + industry) + /stock/metric (peTTM)
+    返回: {ticker, pe, market_cap, name, industry}
     """
     api_key = os.environ.get('FINNHUB_API_KEY')
     if not api_key:
@@ -540,28 +545,128 @@ def fetch_peer_metrics(ticker: str) -> Optional[Dict[str, Any]]:
                 return None
             prof = r_prof.json() or {}
             mc = prof.get('marketCapitalization', 0) * 1_000_000  # Finnhub 单位是 million USD
+            industry = prof.get('finnhubIndustry') or ''
 
             r_met = c.get(f"{base}/stock/metric", params={"symbol": ticker, "token": api_key, "metric": "all"})
             pe = None
             if r_met.status_code == 200:
                 m = r_met.json() or {}
                 metric = (m or {}).get('metric', {}) or {}
-                pe = metric.get('peNormalizedAnnual') or metric.get('peBasicExtraTTM')
-                if pe is not None:
-                    try: pe = float(pe)
+                # 优先 peExclExtraTTM (干净 TTM), 其次 peTTM, 排除 normalized (亏损跳到 1000+)
+                raw_pe = (metric.get('peExclExtraTTM') or metric.get('peTTM') or
+                          metric.get('peBasicExclExtraTTM'))
+                if raw_pe is not None:
+                    try: pe = float(raw_pe)
                     except: pe = None
 
-            if pe is None or pe <= 0:
+            # 过滤异常 PE: <5 或 >150 视为数据缺失 (亏损公司/极特殊情况)
+            if pe is None or pe < 5 or pe > 150:
                 return None
             return {
                 "ticker": ticker,
                 "name": prof.get('name', ticker),
-                "pe_normalized": round(pe, 2),
+                "pe": round(pe, 2),
                 "market_cap": float(mc) if mc else 0,
+                "industry": industry,
             }
     except Exception as e:
         print(f"[peer] Finnhub {ticker} 失败: {e}")
         return None
+
+
+# 按 industry (细分行业) 分组的同业列表 (GICS Industry Group / Finnhub Industry)
+# 比按 sector 准确 (e.g. Semiconductors 是 Technology sector 的细分)
+INDUSTRY_PEERS_BY_INDUSTRY = {
+    # === Technology ===
+    "Semiconductors": ["NVDA", "AMD", "INTC", "MU", "AVGO", "TXN", "MRVL", "AMAT", "QCOM", "ADI", "ON", "MPWR", "KLAC", "LRCX"],
+    "Semiconductor Equipment & Materials": ["AMAT", "LRCX", "KLAC", "ASML", "TER", "ENTG", "ON"],
+    "Software—Application": ["MSFT", "CRM", "ADBE", "ORCL", "INTU", "NOW"],
+    "Software—Infrastructure": ["MSFT", "ORCL", "CRM", "NOW", "ADBE", "PANW", "FTNT", "CRWD"],
+    "Communication Equipment": ["CSCO", "MSI", "JNPR", "CIEN", "LITE", "AAOI", "COHR"],
+    "Computer Hardware": ["AAPL", "HPQ", "DELL", "WDC"],
+    "Consumer Electronics": ["AAPL", "SONY", "GPRO"],
+    "Electronic Components": ["APH", "TEL", "GLW"],
+    "Scientific & Technical Instruments": ["KEYS", "TDY", "TRMB", "COHR"],  # COHR 属于这里
+
+    # === Communication Services ===
+    "Internet Content & Information": ["GOOGL", "META", "PINS", "NFLX", "RDDT"],
+    "Telecom Services": ["T", "VZ", "TMUS"],
+    "Entertainment": ["DIS", "NFLX", "WBD", "PARA"],
+
+    # === Consumer ===
+    "Internet Retail": ["AMZN", "EBAY", "ETSY", "MELI"],
+    "Auto Manufacturers": ["TSLA", "F", "GM", "STLA", "RIVN"],
+    "Restaurants": ["MCD", "CMG", "SBUX", "YUM"],
+    "Apparel Retail": ["TJX", "ROST", "BURL", "GPS"],
+
+    # === Healthcare ===
+    "Drug Manufacturers—General": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "BMY"],
+    "Biotechnology": ["LLY", "AMGN", "GILD", "BIIB", "MRNA", "REGN"],
+    "Medical Devices": ["MDT", "SYK", "BSX", "ZBH"],
+    "Health Insurance": ["UNH", "CVS", "ELV", "CI"],
+
+    # === Financial Services ===
+    "Banks—Diversified": ["JPM", "BAC", "WFC", "C", "GS", "MS"],
+    "Insurance—Diversified": ["BRK.B", "AIG", "ALL"],
+    "Credit Services": ["V", "MA", "PYPL", "AXP"],
+
+    # === Industrials ===
+    "Aerospace & Defense": ["HON", "UNP", "BA", "LMT", "RTX", "GD"],
+    "Specialty Industrial Machinery": ["HON", "UNP", "CAT", "DE", "CMI"],
+
+    # === Energy ===
+    "Oil & Gas Integrated": ["XOM", "CVX", "COP"],
+    "Oil & Gas Equipment & Services": ["SLB", "HAL", "BKR"],
+
+    # === Utilities / Real Estate / Materials ===
+    "Utilities—Renewable": ["NEE", "ENPH"],
+    "REIT—Specialized": ["PLD", "AMT", "EQIX"],
+    "Specialty Chemicals": ["LIN", "FCX", "APD"],
+    "Other Industrial Metals & Mining": ["FCX", "NEM", "GOLD"],
+}
+
+
+# Industry → ETF ticker 映射 (用于 Phase C 板块轮动, 也可作 industry 兜底)
+# 当 ticker 的 industry 不在 INDUSTRY_PEERS_BY_INDUSTRY 时, 用 sector 兜底
+SECTOR_INDUSTRIES = {
+    # 每个 sector 下常见 industry 列表 (用作兜底)
+    "Technology": ["Semiconductors", "Software—Application", "Software—Infrastructure", "Communication Equipment", "Computer Hardware", "Electronic Components", "Scientific & Technical Instruments"],
+    "Communication Services": ["Internet Content & Information", "Telecom Services", "Entertainment"],
+    "Consumer Cyclical": ["Internet Retail", "Auto Manufacturers", "Restaurants", "Apparel Retail"],
+    "Consumer Defensive": [],
+    "Healthcare": ["Drug Manufacturers—General", "Biotechnology", "Medical Devices", "Health Insurance"],
+    "Financial Services": ["Banks—Diversified", "Insurance—Diversified", "Credit Services"],
+    "Industrials": ["Aerospace & Defense", "Specialty Industrial Machinery"],
+    "Energy": ["Oil & Gas Integrated", "Oil & Gas Equipment & Services"],
+    "Utilities": ["Utilities—Renewable"],
+    "Real Estate": ["REIT—Specialized"],
+    "Basic Materials": ["Specialty Chemicals", "Other Industrial Metals & Mining"],
+}
+
+
+def get_industry_peers(industry: str, sector: str = None) -> list:
+    """根据 industry (细分行业) 找同业 ticker 列表
+
+    优先级:
+      1. INDUSTRY_PEERS_BY_INDUSTRY[industry] (精确)
+      2. SECTOR_INDUSTRIES[sector] 下的所有 industry 合并 (兜底)
+      3. 返 []
+    """
+    if industry and industry in INDUSTRY_PEERS_BY_INDUSTRY:
+        return INDUSTRY_PEERS_BY_INDUSTRY[industry]
+    if sector and sector in SECTOR_INDUSTRIES:
+        peers = []
+        for ind in SECTOR_INDUSTRIES[sector]:
+            peers.extend(INDUSTRY_PEERS_BY_INDUSTRY.get(ind, []))
+        # 去重保持顺序
+        seen = set()
+        result = []
+        for p in peers:
+            if p not in seen:
+                seen.add(p)
+                result.append(p)
+        return result
+    return []
 
 
 def compute_historical_pe_range(symbol: str, current_eps: Optional[float]) -> Dict[str, Any]:

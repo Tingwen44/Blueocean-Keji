@@ -17,6 +17,7 @@ from schemas import (
 )
 from data_fetcher import (
     INDUSTRY_PEERS, fetch_peer_metrics, compute_historical_pe_range,
+    INDUSTRY_PEERS_BY_INDUSTRY, SECTOR_INDUSTRIES, get_industry_peers,
 )
 
 
@@ -669,36 +670,54 @@ def compute_valuation_detail(snap: StockSnapshot) -> Dict[str, Any]:
         "when": VALUATION_METRICS[metric]["when"],
     }
 
-    # 2-3. 行业 peers PE
+    # 2-3. 行业 peers PE (Phase E.1.1 修复: 按细分 industry 而非 GICS sector)
+    # 先用 Finnhub 拿自己 ticker 的 industry (更细分), 再用 industry 取同业
+    # 自己的 industry 从 snap.industry 取 (已经是 Finnhub 返回的 finnhubIndustry)
+    own_industry = snap.industry or ''
     sector = snap.sector or "Technology"
-    peers = INDUSTRY_PEERS.get(sector, INDUSTRY_PEERS.get("Technology", []))
+    peers = get_industry_peers(own_industry, sector)
     peers = [p for p in peers if p != snap.ticker.upper()]
+
+    # 拿 self 的 PE (用于 vs industry median)
+    self_pe = snap.pe_trailing or snap.pe_forward
+    # 同步拿自己的 industry (因为 snap.industry 可能不是 Finnhub finnhubIndustry)
+    self_metrics = fetch_peer_metrics(snap.ticker.upper()) if snap.ticker else None
+    if self_metrics:
+        # 用 Finnhub 真实的 industry 覆盖
+        if self_metrics.get('industry') and not own_industry:
+            own_industry = self_metrics['industry']
+            peers = get_industry_peers(own_industry, sector)
+            peers = [p for p in peers if p != snap.ticker.upper()]
+
     peer_data = []
-    for peer in peers[:8]:  # 最多 8 个
+    for peer in peers[:10]:  # 最多 10 个
         m = fetch_peer_metrics(peer)
-        if m and m.get("pe_normalized", 0) > 0:
+        if m and m.get("pe", 0) > 0:
             peer_data.append(m)
 
     if peer_data:
-        pes = sorted([p["pe_normalized"] for p in peer_data])
+        pes = sorted([p["pe"] for p in peer_data])
         n = len(pes)
         median = pes[n // 2] if n % 2 == 1 else (pes[n // 2 - 1] + pes[n // 2]) / 2
         result["industry_pe_median"] = round(median, 2)
         result["industry_peer_count"] = n
+        # 最大对手: 同 industry 里市值最大者 (不再是整个 sector)
         peer_data.sort(key=lambda x: x.get("market_cap", 0), reverse=True)
         top = peer_data[0]
         result["top_competitor"] = {
             "ticker": top["ticker"],
             "name": top["name"],
-            "pe": top["pe_normalized"],
+            "pe": top["pe"],
             "market_cap": top["market_cap"],
         }
 
-        # 自己 PE vs 行业中位 (用 pe_trailing 即 TTM)
-        self_pe = snap.pe_trailing or snap.pe_forward
+        # 自己 PE vs 行业中位 (优先 Finnhub 真实 pe, 其次 snap)
+        if self_metrics and self_metrics.get("pe", 0) > 0:
+            self_pe = self_metrics["pe"]
         if self_pe and self_pe > 0 and median > 0:
             diff_pct = round((self_pe - median) / median * 100, 1)
             result["pe_vs_industry_pct"] = diff_pct
+        result["industry_label"] = own_industry  # 用于前端显示"细分行业"
 
     # 4. 历史 PE 区间 (用 current_price / pe_trailing 估算 EPS)
     if snap.current_price and snap.pe_trailing and snap.pe_trailing > 0:
@@ -1174,14 +1193,8 @@ def compute_blue_ocean_scores(
         "data_available": bool(snap.industry),
     })
 
-    # 2. 日历+事件叠加 (Phase 移除, 改用固定中性)
-    methods.append({
-        "code": "calendar_event",
-        "name": "日历+事件叠加",
-        "applicable": 0,
-        "rationale": "❌ Phase 移除 (用户判断长期价值不大), 保留入口便于未来重启用",
-        "data_available": False,
-    })
+    # 2. 日历+事件叠加 (Phase 移除于 2026-06-19, 完全从 methods 删除)
+    # (删除 - 用户判断长期价值不大)
 
     # 3. 轮动规律识别
     methods.append({
